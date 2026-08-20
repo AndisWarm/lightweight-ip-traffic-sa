@@ -14,6 +14,7 @@ func (r *RecordRouter) InitRecordRouter(root *gin.RouterGroup) {
 	recordAPI := v1.ApiGroupApp.SecurityApiGroup.RecordApi
 	group := root.Group("/records")
 	{
+		// 检测历史记录是只读查询，已登录即可查看。
 		group.GET("", recordAPI.ListRecords)
 	}
 }

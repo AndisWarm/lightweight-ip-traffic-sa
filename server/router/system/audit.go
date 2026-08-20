@@ -15,6 +15,7 @@ func (r *AuditRouter) InitAuditRouter(root *gin.RouterGroup) {
 	auditAPI := v1.ApiGroupApp.SystemApiGroup.AuditApi
 	group := root.Group("/system")
 	{
+		// 审计日志记录了登录等安全事件，属敏感信息，仅 ADMIN 可查。
 		group.GET("/audit-logs", middleware.RequireRoles("ADMIN"), auditAPI.ListAuditLogs)
 	}
 }

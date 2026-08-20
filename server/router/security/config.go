@@ -15,6 +15,7 @@ func (r *ConfigRouter) InitConfigRouter(root *gin.RouterGroup) {
 	configAPI := v1.ApiGroupApp.SecurityApiGroup.ConfigApi
 	group := root.Group("/configs")
 	{
+		// 读配置对已登录角色开放；改配置（PUT/PATCH）会全局影响检测阈值与数据源，只允许 ADMIN/MANAGER。
 		group.GET("/security", configAPI.GetSecurityConfig)
 		group.GET("/security/flow-interfaces", configAPI.ListFlowInterfaces)
 		group.PUT("/security", middleware.RequireRoles("ADMIN", "MANAGER"), configAPI.UpdateSecurityConfig)
