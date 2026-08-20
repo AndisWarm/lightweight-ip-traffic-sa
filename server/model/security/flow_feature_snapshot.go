@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// FlowFeatureSnapshot 对应 sec_flow_feature_snapshot 表，保存流量行为维度的特征快照
+// （行为风险分/突发/扫描/协议分布等），collection_id 唯一索引即一次采集只有一份行为特征。
 // FlowFeatureSnapshot 用于映射流量特征快照数据库记录。
 type FlowFeatureSnapshot struct {
 	ID                       uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

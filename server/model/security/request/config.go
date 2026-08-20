@@ -1,5 +1,7 @@
 package request
 
+// ConfigWeightRequest 是配置权重子对象的入参，四个维度权重均必填（binding:"required"），
+// 由 UpdateConfigRequest.Weights 内嵌承载。
 // ConfigWeightRequest 用于承载配置Weight接口的请求参数。
 type ConfigWeightRequest struct {
 	WhoisWeight         float64 `json:"whoisWeight" binding:"required"`
@@ -8,6 +10,8 @@ type ConfigWeightRequest struct {
 	BehaviorWeight      float64 `json:"behaviorWeight" binding:"required"`
 }
 
+// UpdateConfigRequest 是更新安全配置接口的入参（JSON body）。核心字段（whois/信誉/攻击面端点、
+// 通知渠道、高低危阈值、权重）必填；邮件/SMTP、流量采集字段按需填写。
 // UpdateConfigRequest 用于承载Update配置接口的请求参数。
 type UpdateConfigRequest struct {
 	WhoisEndpoint         string              `json:"whoisEndpoint" binding:"required"`
@@ -34,6 +38,8 @@ type UpdateConfigRequest struct {
 	Weights               ConfigWeightRequest `json:"weights" binding:"required"`
 }
 
+// UpdateFlowToggleRequest 是流量开关接口的入参。Enabled 用指针 + required 校验，
+// 以区分“显式传入 false”与“未传该字段”两种情况。
 // UpdateFlowToggleRequest 用于承载Update流量Toggle接口的请求参数。
 type UpdateFlowToggleRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`

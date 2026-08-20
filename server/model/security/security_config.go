@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// SecurityConfig 对应 sec_security_config 表，设计为单行运行时配置：流量采集参数、通知/SMTP 参数、
+// 高低危阈值与各维度权重，可在线修改而无需重启服务（优先级高于 config.yaml 默认值）。
 // SecurityConfig 用于承载安全运行配置。
 type SecurityConfig struct {
 	ID                    uint64    `gorm:"primaryKey;autoIncrement" json:"id"`

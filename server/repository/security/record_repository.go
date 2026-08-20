@@ -77,6 +77,10 @@ type AlertRecordRow struct {
 	CreatedAt                   time.Time
 }
 
+// ListTaskRecords 用一条多表 JOIN 的 SQL 组装“历史记录”列表所需的全部字段：
+// 任务 LEFT JOIN 评分/画像/特征，再关联每个任务最近一次流量采集（相关子查询取最新一条），
+// 并通过派生表把该采集的窗口聚合指标预先 GROUP BY 求和，最后关联流量特征快照。
+// 这样一次查询即可渲染整张列表，避免对每条记录再发起 N 次查询。
 // ListTaskRecords 用于查询记录列表。
 func (r *RecordRepository) ListTaskRecords(db *gorm.DB, keyword string, createdBy string) ([]TaskRecordRow, error) {
 	base := db.Table("sec_ip_task AS t").
@@ -112,6 +116,9 @@ func (r *RecordRepository) ListTaskRecords(db *gorm.DB, keyword string, createdB
 	return rows, err
 }
 
+// ListAlertRecords 与 ListTaskRecords 结构一致，只是主表换成预警表：以 sec_alert_record 为驱动表
+// 反查任务/画像/特征/流量，keyword 同时匹配 IP 与任务号。实时监控预警没有 task_id，
+// 其 JOIN 会自然落空，相关列用 COALESCE 兜底为空串/0。
 // ListAlertRecords 用于查询记录列表。
 func (r *RecordRepository) ListAlertRecords(db *gorm.DB, keyword string, createdBy string) ([]AlertRecordRow, error) {
 	base := db.Table("sec_alert_record AS a").

@@ -47,6 +47,8 @@ func (r *FeatureRepository) ListPayloads(db *gorm.DB) ([]FeaturePayloadRow, erro
 	return rows, err
 }
 
+// CountAttackSurfaceSummary 统计攻击面指标：用 CASE WHEN 把“有开放端口/有高危端口”的每条任务计为 1 再 SUM，
+// 得到暴露面任务数与高危端口任务数，供总览页展示。
 // CountAttackSurfaceSummary 用于统计特征数据。
 func (r *FeatureRepository) CountAttackSurfaceSummary(db *gorm.DB) (AttackSurfaceSummary, error) {
 	var summary AttackSurfaceSummary

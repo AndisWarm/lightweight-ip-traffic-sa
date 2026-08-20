@@ -32,6 +32,8 @@ type DashboardFlowModeItem struct {
 	Count int64  `json:"count"`
 }
 
+// DashboardFlowTrendItem 是总览流量趋势的逐日数据点；HasWindowMetrics/HasBehaviorSnapshot
+// 标记当日是否真的有窗口/行为数据（而非全部为 0 的占位点），供前端决定是否渲染折线。
 // DashboardFlowTrendItem 用于承载总览流量Trend列表展示条目。
 type DashboardFlowTrendItem struct {
 	Date                   string  `json:"date"`
@@ -69,6 +71,8 @@ type DashboardRecentFlowItem struct {
 	CreatedAt         string `json:"createdAt"`
 }
 
+// DashboardSummaryResponse 是总览页接口的出参，一次返回全部统计块（任务/风险/预警/来源覆盖/流量），
+// 避免前端并发请求多个统计接口。末尾的 StableChain/EnhancedSwitches 等字段用于标注原型能力边界。
 // DashboardSummaryResponse 用于承载总览摘要接口的响应数据。
 type DashboardSummaryResponse struct {
 	TotalTaskCount          int64                           `json:"totalTaskCount"`

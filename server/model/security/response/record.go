@@ -1,5 +1,8 @@
 package response
 
+// RecordListItem 是历史记录列表的单条展示项：EventType 区分任务/预警，Level/Status/Time/DetailRoute
+// 为派生字段（由后端统一换算，便于前端按同一套 UI 渲染两类记录），FlowHasRealMetrics/FlowIsTraceable
+// 标记流量数据是否真实可追溯。
 // RecordListItem 用于承载记录List列表展示条目。
 type RecordListItem struct {
 	ID                          uint64  `json:"id"`

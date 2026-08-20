@@ -31,6 +31,7 @@ type FlowWindowSummaryRow struct {
 	TLSEventCount        int64
 }
 
+// CreateInBatches 批量写入窗口聚合行：一次采集会产出多个窗口，批量插入避免逐条 INSERT 的往返开销。
 // CreateInBatches 用于写入流量WindowAggregate记录。
 func (r *FlowWindowAggregateRepository) CreateInBatches(db *gorm.DB, rows []securityModel.FlowWindowAggregate, batchSize int) error {
 	if len(rows) == 0 {
@@ -85,6 +86,8 @@ func (r *FlowWindowAggregateRepository) CountDailyTrend(db *gorm.DB, start time.
 	return rows, err
 }
 
+// CountDailySummary 按天把各窗口的分协议事件数（DNS/HTTP/TLS）与高危端口命中数相加，
+// 得到总览页流量明细趋势的逐日汇总。
 // CountDailySummary 用于统计流量WindowAggregate数据。
 func (r *FlowWindowAggregateRepository) CountDailySummary(db *gorm.DB, start time.Time) ([]FlowWindowSummaryRow, error) {
 	var rows []FlowWindowSummaryRow

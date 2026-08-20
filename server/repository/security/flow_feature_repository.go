@@ -55,6 +55,9 @@ func (r *FlowFeatureSnapshotRepository) FindLatestByTaskID(db *gorm.DB, taskID u
 	return &snapshot, nil
 }
 
+// CountBehaviorTrend 按天统计流量行为风险趋势。部分列（如 high_entropy_packet_count）是后续迁移才加入的，
+// 老库可能不存在，先用 Migrator().HasColumn 探测列是否存在，缺列时表达式退化为常量 0，
+// 避免对缺失列执行 SQL 直接报错。
 // CountBehaviorTrend 用于统计流量特征快照数据。
 func (r *FlowFeatureSnapshotRepository) CountBehaviorTrend(db *gorm.DB, start time.Time) ([]FlowBehaviorTrendRow, error) {
 	var rows []FlowBehaviorTrendRow

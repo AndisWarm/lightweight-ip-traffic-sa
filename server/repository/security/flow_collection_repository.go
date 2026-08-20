@@ -49,6 +49,8 @@ func (r *FlowCollectionRepository) Create(db *gorm.DB, collection *securityModel
 	return db.Create(collection).Error
 }
 
+// CreateInBatches 批量写入采集记录：窗口聚合可能一次产出大量行，分批插入可避免单条 SQL 参数过多；
+// 空切片直接返回，避免执行无意义的 INSERT。
 // CreateInBatches 用于写入流量Collection记录。
 func (r *FlowCollectionRepository) CreateInBatches(db *gorm.DB, collections []securityModel.FlowCollection, batchSize int) error {
 	if len(collections) == 0 {
@@ -110,6 +112,8 @@ func (r *FlowCollectionRepository) CountModeDistribution(db *gorm.DB, start time
 	return rows, err
 }
 
+// CountDailyTrend 按天汇总采集量与流量总量：failed 的采集 started_at 可能为零值，
+// 用 COALESCE(started_at, created_at) 兜底归到创建日，避免出现“1970 年”的异常分桶。
 // CountDailyTrend 用于统计流量Collection数据。
 func (r *FlowCollectionRepository) CountDailyTrend(db *gorm.DB, start time.Time) ([]FlowCollectionTrendRow, error) {
 	var rows []FlowCollectionTrendRow

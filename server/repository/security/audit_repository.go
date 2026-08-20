@@ -17,6 +17,8 @@ func (r *AuditRepository) Create(db *gorm.DB, record *securityModel.AuditLog) er
 	return db.Create(record).Error
 }
 
+// List 分页查询审计日志：每个筛选条件都先 TrimSpace，空白输入视为未筛选，避免把空格当成有效条件；
+// actor 用模糊匹配，其余用等值匹配。
 // List 用于查询审计列表。
 func (r *AuditRepository) List(db *gorm.DB, query requestModel.AuditLogQuery) ([]securityModel.AuditLog, int64, error) {
 	base := db.Model(&securityModel.AuditLog{})
@@ -46,6 +48,7 @@ func (r *AuditRepository) List(db *gorm.DB, query requestModel.AuditLogQuery) ([
 	return rows, total, err
 }
 
+// DistinctCategories 取审计日志中已出现的全部分类，供列表页下拉筛选使用（去重 + 升序）。
 // DistinctCategories 用于访问审计持久化数据。
 func (r *AuditRepository) DistinctCategories(db *gorm.DB) ([]string, error) {
 	var rows []string

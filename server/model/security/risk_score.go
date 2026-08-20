@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// RiskScore 对应 sec_risk_score 表，保存最终评分及各维度贡献分，字段拆列以便解释与追溯；
+// weight_profile 记录评分时的权重快照，algorithm_version 记录算法版本，保证历史评分可复现。
 // RiskScore 用于映射风险评分数据库记录。
 type RiskScore struct {
 	ID                  uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

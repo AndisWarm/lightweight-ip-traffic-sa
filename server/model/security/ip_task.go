@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// IPTask 对应 sec_ip_task 表，是安全检测任务的主表，记录一次 IP/域名检测的完整生命周期。
+// task_no 全局唯一，target_ip/status/created_at 建索引以支撑按 IP、状态、时间的列表查询。
 // IPTask 用于映射IP任务数据库记录。
 type IPTask struct {
 	ID           uint64     `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

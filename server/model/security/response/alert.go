@@ -1,5 +1,6 @@
 package response
 
+// AlertListItem 是预警列表单条展示项，CreatedAt 为格式化后的字符串（非原始 time.Time），便于前端直接展示。
 // AlertListItem 用于承载预警List列表展示条目。
 type AlertListItem struct {
 	AlertID     uint64 `json:"alertId"`
@@ -13,6 +14,7 @@ type AlertListItem struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
+// PagedAlertResponse 是预警列表接口的出参：Page/PageSize/Total 回显分页信息，Items 为当前页数据。
 // PagedAlertResponse 用于承载Paged预警接口的响应数据。
 type PagedAlertResponse struct {
 	Page     int             `json:"page"`
@@ -44,6 +46,8 @@ type AlertScore struct {
 	WeightProfile       map[string]float64 `json:"weightProfile"`
 }
 
+// AlertDetailResponse 是预警详情接口的出参，内嵌 Task/Score 子对象；实时监控预警因无任务，
+// Task/Score 可能为 nil，前端需做空值容错。
 // AlertDetailResponse 用于承载预警Detail接口的响应数据。
 type AlertDetailResponse struct {
 	AlertID          uint64      `json:"alertId"`

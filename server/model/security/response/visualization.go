@@ -14,11 +14,14 @@ type DashboardGeoRiskItem struct {
 	HasCoordinate bool    `json:"hasCoordinate"`
 }
 
+// DashboardGeoRiskResponse 是总览地理风险分布接口的出参，Items 附带经纬度（HasCoordinate 标记是否有坐标），
+// 供地图散点渲染。
 // DashboardGeoRiskResponse 用于承载总览地理风险接口的响应数据。
 type DashboardGeoRiskResponse struct {
 	Items []DashboardGeoRiskItem `json:"items"`
 }
 
+// RelationGraphNode 是关系图中的一个节点，Value 表示权重/大小，Meta 携带额外的展示元数据。
 // RelationGraphNode 用于映射RelationGraphNode数据库记录。
 type RelationGraphNode struct {
 	ID       string         `json:"id"`
@@ -37,6 +40,8 @@ type RelationGraphEdge struct {
 	Meta   map[string]any `json:"meta"`
 }
 
+// TaskRelationGraphResponse 是任务关系图接口的出参，Nodes/Edges 描述 IP 与画像/评分/预警等实体间的关联，
+// 供前端力导向图渲染。
 // TaskRelationGraphResponse 用于承载任务RelationGraph接口的响应数据。
 type TaskRelationGraphResponse struct {
 	TaskID uint64              `json:"taskId"`

@@ -1,6 +1,7 @@
 package request
 
 // LoginRequest 用于承载Login接口的请求参数。
+// binding 标签在 Gin 的参数绑定阶段做长度/必填校验，非法入参到不了业务层。
 type LoginRequest struct {
 	Username string `json:"username" binding:"required,min=3"`
 	Password string `json:"password" binding:"required,min=6"`
@@ -12,6 +13,7 @@ type CreateUserRequest struct {
 	Password    string `json:"password" binding:"required,min=6"`
 	DisplayName string `json:"displayName" binding:"required,min=2"`
 	RoleCode    string `json:"roleCode" binding:"required"`
+	// 用指针区分"未传"(nil) 与 "false"，避免零值被当成禁用
 	Enable      *bool  `json:"enable"`
 }
 

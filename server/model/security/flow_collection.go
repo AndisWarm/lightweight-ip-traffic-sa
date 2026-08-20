@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// FlowCollection 对应 sec_flow_collection 表，记录一次流量采集的元数据（模式/解析器/包量/字节量），
+// 一个任务可对应多次采集（1:N），evidence_payload 存采集证据 JSON。
 // FlowCollection 用于映射流量Collection数据库记录。
 type FlowCollection struct {
 	ID                uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

@@ -63,6 +63,8 @@ func (r *ScoreRepository) CountRiskDistribution(db *gorm.DB) ([]RiskLevelCountRo
 	return rows, err
 }
 
+// CountRiskTrend 按天统计高危/严重任务数：CASE WHEN 把 HIGH/CRITICAL 分别计 1 后按天求和，
+// 供总览页绘制风险趋势曲线。
 // CountRiskTrend 用于统计评分数据。
 func (r *ScoreRepository) CountRiskTrend(db *gorm.DB, start time.Time) ([]RiskTrendCountRow, error) {
 	var rows []RiskTrendCountRow

@@ -15,6 +15,7 @@ type UserInfo struct {
 
 // LoginResponse 用于承载Login接口的响应数据。
 type LoginResponse struct {
+	// 前端拿到后存本地，后续请求放入 Authorization 头
 	Token string   `json:"token"`
 	User  UserInfo `json:"user"`
 }

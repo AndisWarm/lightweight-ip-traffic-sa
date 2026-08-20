@@ -5,12 +5,16 @@ import (
 	"strings"
 )
 
+// CreateTaskRequest 是创建检测任务接口的入参。TargetIP 必填（实际可传 IP 或域名，
+// 由 service 层解析成目标 IP）；RequestedBy 由前端透传的发起人标识，可为空。
 // CreateTaskRequest 用于承载Create任务接口的请求参数。
 type CreateTaskRequest struct {
 	TargetIP    string `json:"targetIp" binding:"required"`
 	RequestedBy string `json:"requestedBy"`
 }
 
+// ResolvedTaskTarget 是 CreateTaskRequest 解析后的规范化目标：区分原始输入类型（IP/DOMAIN）、
+// 原始值与最终用于检测的目标 IP。
 // ResolvedTaskTarget 用于映射Resolved任务Target数据库记录。
 type ResolvedTaskTarget struct {
 	InputType  string
@@ -18,12 +22,15 @@ type ResolvedTaskTarget struct {
 	TargetIP   string
 }
 
+// Normalize 去除入参首尾空白，避免前端多传空格导致后续校验/入库出现意外匹配。
 // Normalize 用于规范化当前。
 func (r *CreateTaskRequest) Normalize() {
 	r.TargetIP = strings.TrimSpace(r.TargetIP)
 	r.RequestedBy = strings.TrimSpace(r.RequestedBy)
 }
 
+// TaskListQuery 是任务列表接口的查询入参。SortBy/SortOrder 等字段会在 Normalize 中归一化、
+// 在 Validate 中做白名单校验（防止任意排序字段/方向被拼进 SQL），之后才交给 repository 使用。
 // TaskListQuery 用于映射任务ListQuery数据库记录。
 type TaskListQuery struct {
 	Page       int    `form:"page"`
@@ -59,6 +66,8 @@ var (
 	}
 )
 
+// Normalize 把筛选/排序参数归一化：状态与风险等级统一大写以匹配库中枚举值，
+// 排序字段与方向补默认值，保证 Validate 的比对口径一致。
 // Normalize 用于规范化当前。
 func (q *TaskListQuery) Normalize() {
 	q.TargetIP = strings.TrimSpace(q.TargetIP)
@@ -75,6 +84,8 @@ func (q *TaskListQuery) Normalize() {
 	}
 }
 
+// Validate 对筛选/排序参数做白名单校验：非法的状态/等级/排序字段/方向直接报错，
+// 从源头杜绝把未校验字符串拼进 ORDER BY 造成的 SQL 注入风险。
 // Validate 用于校验当前。
 func (q TaskListQuery) Validate() error {
 	if q.TaskStatus != "" {

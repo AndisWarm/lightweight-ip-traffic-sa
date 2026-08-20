@@ -11,6 +11,7 @@ type TaskCreateResponse struct {
 	AlertCreated bool    `json:"alertCreated"`
 }
 
+// TaskListItem 是任务列表单条展示项，CreatedAt 为格式化字符串；未评分任务的 ScoreValue 为 0、RiskLevel 为 LOW。
 // TaskListItem 用于承载任务List列表展示条目。
 type TaskListItem struct {
 	TaskID     uint64  `json:"taskId"`
@@ -22,6 +23,7 @@ type TaskListItem struct {
 	CreatedAt  string  `json:"createdAt"`
 }
 
+// PagedTaskResponse 是任务列表接口的出参，回显 SortBy/SortOrder 让前端保持当前排序状态。
 // PagedTaskResponse 用于承载Paged任务接口的响应数据。
 type PagedTaskResponse struct {
 	Page      int            `json:"page"`
@@ -241,6 +243,8 @@ type TaskAlertSummary struct {
 	CreatedAt    string `json:"createdAt"`
 }
 
+// TaskDetailResponse 是任务详情接口的出参，内嵌 BaseInfo/Features/Flow/Score/Alert 五个子对象，
+// 由 service 层把 repository 聚合的 TaskDetailBundle 翻译成前端友好的结构。
 // TaskDetailResponse 用于承载任务Detail接口的响应数据。
 type TaskDetailResponse struct {
 	TaskID       uint64            `json:"taskId"`

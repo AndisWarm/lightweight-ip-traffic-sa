@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// IPBaseInfo 对应 sec_ip_base_info 表，保存 IP 的基础画像（地理位置/ISP/WHOIS），
+// task_id 唯一索引保证一个任务只有一条画像；raw_payload 存 GeoLite2/RDAP 原始 JSON 供后续分析。
 // IPBaseInfo 用于映射IP基础信息数据库记录。
 type IPBaseInfo struct {
 	ID           uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

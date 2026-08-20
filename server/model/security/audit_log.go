@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// AuditLog 对应 sec_audit_log 表，记录安全域关键操作（分类/动作/操作人/目标/状态），
+// detail 以 JSON 保存可变结构的上下文，供审计回溯。
 // AuditLog 用于映射审计Log数据库记录。
 type AuditLog struct {
 	ID          uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

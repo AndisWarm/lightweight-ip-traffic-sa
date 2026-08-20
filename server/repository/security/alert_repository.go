@@ -70,6 +70,8 @@ func (r *AlertRepository) FindByTaskID(db *gorm.DB, taskID uint64) (*securityMod
 	return &alert, nil
 }
 
+// FindDetailByID 组装预警详情：实时监控产生的预警 task_id 为 NULL/0（不绑定任务），
+// 因此这里先判空再决定是否回查任务与评分，避免对不存在的任务误查。
 // FindDetailByID 用于查询预警记录。
 func (r *AlertRepository) FindDetailByID(db *gorm.DB, alertID uint64) (*AlertDetailBundle, error) {
 	alert, err := r.FindByID(db, alertID)
@@ -107,6 +109,8 @@ func (r *AlertRepository) FindDetailByID(db *gorm.DB, alertID uint64) (*AlertDet
 	}, nil
 }
 
+// List 分页查询预警列表：LEFT JOIN 任务表以带出 task_no 并按发起人过滤；
+// source_type/source_label 为空时用 COALESCE 动态推导——有 task_id 视为 TASK，否则视为 FLOW_MONITOR。
 // List 用于查询预警列表。
 func (r *AlertRepository) List(db *gorm.DB, query requestModel.AlertListQuery) ([]AlertListRow, int64, error) {
 	base := db.Table("sec_alert_record AS a").
@@ -165,6 +169,7 @@ func (r *AlertRepository) CountDailyTrend(db *gorm.DB, start time.Time) ([]Alert
 	return rows, err
 }
 
+// DeleteByTaskID 按任务批量删除预警，属于删除任务时的级联清理步骤之一。
 // DeleteByTaskID 用于删除预警记录。
 func (r *AlertRepository) DeleteByTaskID(db *gorm.DB, taskID uint64) error {
 	return db.Where("task_id = ?", taskID).Delete(&securityModel.AlertRecord{}).Error

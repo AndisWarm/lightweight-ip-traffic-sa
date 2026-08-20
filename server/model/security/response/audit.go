@@ -17,6 +17,7 @@ type AuditLogItem struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
+// PagedAuditLogResponse 是审计日志列表接口的出参，Categories 附带去重后的分类列表供前端筛选下拉。
 // PagedAuditLogResponse 用于承载Paged审计Log接口的响应数据。
 type PagedAuditLogResponse struct {
 	Page       int            `json:"page"`

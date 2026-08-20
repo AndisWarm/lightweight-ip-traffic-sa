@@ -8,6 +8,8 @@ type ConfigWeightResponse struct {
 	BehaviorWeight      float64 `json:"behaviorWeight"`
 }
 
+// ConfigResponse 是读取安全配置接口的出参，覆盖流量采集、通知/SMTP、阈值与权重；
+// DemoMode 标识演示模式，前端据此隐藏或禁用部分交互。
 // ConfigResponse 用于承载配置接口的响应数据。
 type ConfigResponse struct {
 	DemoMode              bool                 `json:"demoMode"`
@@ -34,6 +36,7 @@ type ConfigResponse struct {
 	Weights               ConfigWeightResponse `json:"weights"`
 }
 
+// FlowInterfaceOption 是可选抓包网卡的下拉选项，由服务端探测本机网卡后返回给前端选择。
 // FlowInterfaceOption 用于映射流量InterfaceOption数据库记录。
 type FlowInterfaceOption struct {
 	Name                 string `json:"name"`

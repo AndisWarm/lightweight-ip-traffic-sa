@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// AlertRecord 对应 sec_alert_record 表。实时监控产生的预警不绑定任务，因此 TaskID/ScoreID 用指针可为 NULL；
+// source_type 区分 TASK / FLOW_MONITOR，send_status 跟踪通知发送状态（PENDING/SENT/FAILED）。
 // AlertRecord 用于映射预警记录数据库记录。
 type AlertRecord struct {
 	ID               uint64     `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

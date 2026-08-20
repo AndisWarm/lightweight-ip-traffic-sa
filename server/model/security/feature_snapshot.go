@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// FeatureSnapshot 对应 sec_feature_snapshot 表，保存单任务的静态特征快照（信誉分/开放端口/地理风险），
+// 是评分引擎的输入之一；normalized_features 以 JSON 存储归一化后的完整特征。
 // FeatureSnapshot 用于映射特征快照数据库记录。
 type FeatureSnapshot struct {
 	ID                 uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

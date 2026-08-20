@@ -1,5 +1,7 @@
 package response
 
+// FlowMonitorSessionResponse 是实时流量监控会话详情/列表项的出参，聚合会话状态、流量统计、
+// 行为特征与指标趋势（MetricTrend）及最近预警（LatestAlert）。
 // FlowMonitorSessionResponse 用于承载流量监控Session接口的响应数据。
 type FlowMonitorSessionResponse struct {
 	SessionID                string                   `json:"sessionId"`

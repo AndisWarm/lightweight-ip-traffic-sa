@@ -2,6 +2,8 @@ package security
 
 import "time"
 
+// FlowWindowAggregate 对应 sec_flow_window_aggregate 表，把一次采集按时间窗口切分并聚合统计，
+// (collection_id, window_no) 唯一索引保证同一采集的窗口编号不重复。
 // FlowWindowAggregate 用于映射流量WindowAggregate数据库记录。
 type FlowWindowAggregate struct {
 	ID                   uint64    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

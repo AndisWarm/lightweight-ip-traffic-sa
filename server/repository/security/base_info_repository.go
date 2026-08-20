@@ -32,6 +32,7 @@ func (r *BaseInfoRepository) FindByTaskID(db *gorm.DB, taskID uint64) (*security
 	return &baseInfo, nil
 }
 
+// ListPayloads 只取 raw_payload 列（Geo/RDAP 原始 JSON），用于离线重建画像，避免加载整行多余字段。
 // ListPayloads 用于查询基础信息列表。
 func (r *BaseInfoRepository) ListPayloads(db *gorm.DB) ([]BaseInfoPayloadRow, error) {
 	var rows []BaseInfoPayloadRow
