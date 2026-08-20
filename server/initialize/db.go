@@ -11,18 +11,25 @@ import (
 
 // InitDB 用于初始化运行时依赖或基础数据。
 func InitDB() (*gorm.DB, error) {
+	// 用 DSN 打开 MySQL；gorm.Open 只建立连接池配置，真正的连接由后续首次查询惰性建立，
+	// 因此这里返回的 err 主要来自 DSN 解析/驱动加载失败，而非"连不上数据库"。
 	db, err := gorm.Open(mysql.Open(global.AppConfig.Database.DSN), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
+	// 拿到底层 *sql.DB 以便调整连接池参数。
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
 	}
+	// 连接池调优：MaxIdle 控制空闲连接复用上限（减少频繁建连），MaxOpen 限制并发连接上限（防止打满 MySQL）。
+	// 两个值来自 config.yaml，若为 0 已在 LoadConfig 的 applyDefaults 阶段填入默认值。
 	sqlDB.SetMaxIdleConns(global.AppConfig.Database.MaxIdleConns)
 	sqlDB.SetMaxOpenConns(global.AppConfig.Database.MaxOpenConns)
 
+	// 自动迁移：把 system + security 两个域的实体映射成数据库表；表不存在才建，存在则跳过，
+	// 避免每次启动重复建表或误改已有表结构。
 	models := []interface{}{
 		&systemModel.SysUser{},
 		&systemModel.SysJWTBlacklist{},
@@ -47,6 +54,9 @@ func InitDB() (*gorm.DB, error) {
 		}
 	}
 
+	// 以下是历史版本的增量补列迁移：GORM 的 AutoMigrate 只负责"建表/补列"，
+	// 对老表新增列、回填历史数据、建唯一索引等场景需要手工 SQL 兜底，
+	// 且每一段都用"列不存在才执行"做幂等判断，重复启动不会报错。
 	if db.Migrator().HasTable(&systemModel.SysJWTBlacklist{}) {
 		if !db.Migrator().HasColumn(&systemModel.SysJWTBlacklist{}, "token_hash") {
 			if err := db.Exec("ALTER TABLE sys_jwt_blacklist ADD COLUMN token_hash VARCHAR(64) NOT NULL DEFAULT ''").Error; err != nil {

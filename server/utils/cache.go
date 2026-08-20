@@ -16,6 +16,7 @@ import (
 	"lightweight-ip-traffic-sa/server/global"
 )
 
+// 缓存 key 统一采用 "域:模块:标识" 的命名空间前缀，避免不同业务的数据相互覆盖。
 const (
 	SecurityDashboardSummaryCacheKey = "security:dashboard:summary"
 	SecurityConfigCacheKey           = "security:config:current"
@@ -29,6 +30,8 @@ const (
 
 // CacheGetJSON 用于执行缓存GetJSON流程。
 func CacheGetJSON(key string, dest interface{}) (bool, error) {
+	// Redis 不可用时（global.RDB 为 nil，即初始化阶段降级）直接返回未命中，
+	// 让调用方回退到直连数据源查库，缓存层对业务透明。
 	if global.RDB == nil {
 		return false, nil
 	}
@@ -84,6 +87,9 @@ func CacheDelete(keys ...string) error {
 
 // BuildCollectorCacheKey 用于构建Collector缓存Key。
 func BuildCollectorCacheKey(targetIP, sourceName, configVersion string) string {
+	// 关键点：key 必须同时包含 target_ip + source + config_version。
+	// 目标 IP 与来源决定"缓存的是谁的、用什么数据源算的"；config_version 的哈希保证
+	// 一旦改了权重/阈值等配置，key 随之变化、旧缓存自动失效，避免脏结果被长期复用。
 	configHash := sha256.Sum256([]byte(configVersion))
 	return fmt.Sprintf(
 		"security:collector:%s:%s:%s",
@@ -105,6 +111,8 @@ func BuildAlertDetailCacheKey(alertID uint64) string {
 
 // sanitizeCacheSegment 用于清理缓存Segment展示数据。
 func sanitizeCacheSegment(input string) string {
+	// 清理 key 分段里的特殊字符：IP 中的点、路径里的斜杠、空格等会破坏 key 的可读性与工具解析，
+	// 统一替换成下划线；保留冒号用于 Redis key 的分层结构。
 	replacer := strings.NewReplacer(
 		":", "_",
 		".", "_",
@@ -137,6 +145,7 @@ func DetailQueryCacheTTL() time.Duration {
 
 // resolveCacheTTL 用于解析缓存TTL。
 func resolveCacheTTL(seconds int, fallback time.Duration) time.Duration {
+	// 配置值 <= 0 视为未配置，回退到内置默认 TTL；大于 0 则按秒换算。
 	if seconds <= 0 {
 		return fallback
 	}

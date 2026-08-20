@@ -14,14 +14,20 @@ import (
 )
 
 // demoUserSeed 用于承载demo用户Seed数据。
+// 三个默认账号分别对应 ADMIN/MANAGER/USER 三级角色，覆盖不同权限粒度的开箱体验。
 type demoUserSeed struct {
+	// 登录名
 	Username    string
+	// 展示名
 	DisplayName string
+	// 角色编码，决定权限边界
 	RoleCode    string
 }
 
 // InitDemoUsers 用于初始化运行时依赖或基础数据。
 func InitDemoUsers() error {
+	// 种子数据作用：让项目 clone 下来就能用默认账号登录，并补齐一条安全配置，
+	// 避免首次启动时"没有账号可登 / 没有配置可算"的尴尬。
 	users := []demoUserSeed{
 		{Username: "admin", DisplayName: "Admin", RoleCode: utils.RoleAdmin},
 		{Username: "manager", DisplayName: "Manager", RoleCode: utils.RoleManager},
@@ -39,6 +45,8 @@ func InitDemoUsers() error {
 
 // ensureUser 用于确保基础数据或配置满足运行要求。
 func ensureUser(seed demoUserSeed) error {
+	// 幂等处理：先查用户是否存在；已存在则只刷新展示名/角色/启用状态（保证重启后一致），
+	// 不存在才创建。这样重复启动不会重复插入，也不会覆盖用户后来改过的密码。
 	var user systemModel.SysUser
 	err := global.DB.Where("username = ?", seed.Username).First(&user).Error
 	if err == nil {
@@ -52,6 +60,7 @@ func ensureUser(seed demoUserSeed) error {
 		return err
 	}
 
+	// 默认密码经 bcrypt 哈希后入库，绝不存明文；DefaultCost(10) 是速度与安全性的折中。
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte("Admin123!"), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -70,6 +79,7 @@ func ensureUser(seed demoUserSeed) error {
 
 // ensureSecurityConfig 用于确保基础数据或配置满足运行要求。
 func ensureSecurityConfig() error {
+	// 安全配置表只需一条"当前生效"记录：已存在则跳过，不存在才用 config.yaml 的默认值创建。
 	var config securityModel.SecurityConfig
 	err := global.DB.Order("id ASC").First(&config).Error
 	if err == nil {
