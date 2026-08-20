@@ -51,6 +51,7 @@ import { useUserStore } from '../../pinia/modules/user'
 const router = useRouter()
 const userStore = useUserStore()
 
+// 侧边栏菜单配置：roles 声明每个入口对哪些角色可见，角色不在列表内则整项隐藏
 const menuItems = [
   { path: '/security/overview', title: '态势总览', roles: ['ADMIN', 'MANAGER', 'USER'] },
   { path: '/security/task', title: '检测任务', roles: ['ADMIN', 'MANAGER', 'USER'] },
@@ -63,12 +64,14 @@ const menuItems = [
   { path: '/security/config', title: '系统配置', roles: ['ADMIN', 'MANAGER'] },
 ]
 
+// 按当前用户角色过滤菜单：这里只是前端隐藏入口，真正的权限拦截在路由守卫的 meta.roles
 const visibleMenuItems = computed(() =>
   menuItems.filter((item) => item.roles.includes(userStore.roleCode))
 )
 
 const roleName = computed(() => userStore.userInfo?.roleName || '')
 
+// 退出登录：调用 store 清除 token 与用户信息后跳回登录页
 const handleLogout = async () => {
   await userStore.logoutAction()
   ElMessage.success('已退出登录')

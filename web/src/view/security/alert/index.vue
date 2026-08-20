@@ -13,6 +13,7 @@
     <el-card class="sa-panel" shadow="never">
       <template #header>{{ content.listCardTitle }}</template>
 
+      <!-- 列表统计：总预警数/严重/高危/发送失败，基于当前已加载列表计算（useSecurityListStats） -->
       <div class="stats-toolbar">
         <el-tag>{{ content.quickStats.total }}：{{ alertStats.total }}</el-tag>
         <el-tag type="danger">{{ content.quickStats.critical }}：{{ alertStats.critical }}</el-tag>
@@ -27,6 +28,7 @@
         :title="`${content.activeFilterPrefix}${activeFilterText}`"
       />
 
+      <!-- 筛选工具栏：按目标/标识、预警等级、发送状态过滤，任一条件变化即重新请求 -->
       <div class="filter-toolbar">
         <el-input
           v-model="filters.targetIp"
@@ -168,6 +170,7 @@ const { stats: alertStats, activeFilterText } = useSecurityListStats(
   }
 )
 
+// 拉取预警列表：按目标/标识、预警等级、发送状态分页查询，数据来自 getSecurityAlertList
 const loadAlerts = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -188,6 +191,7 @@ const loadAlerts = async () => {
   }
 }
 
+// 跳转到预警详情页，携带预警 ID 作为路由参数
 const openDetail = (alertId) => {
   router.push(`/security/alert/${alertId}`)
 }

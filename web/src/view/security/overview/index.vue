@@ -10,6 +10,7 @@
       <el-tag type="danger">{{ content.badge }}</el-tag>
     </header>
 
+    <!-- 核心指标卡：任务总数/高危/严重/预警/暴露任务等汇总数字，数据来自 getSecuritySummary -->
     <div class="stat-grid">
       <article class="stat-card">
         <span class="label">{{ content.statLabels.totalTaskCount }}</span>
@@ -41,6 +42,7 @@
       </article>
     </div>
 
+    <!-- 快捷入口卡片：点击跳转到检测任务 / 预警中心 -->
     <div class="quick-grid">
       <el-card class="sa-panel quick-card" shadow="never" @click="router.push('/security/task')">
         <h3>{{ content.quickLinks.taskTitle }}</h3>
@@ -121,6 +123,7 @@
       </div>
     </el-card>
 
+    <!-- 图表区：检测趋势折线、风险分布饼图（来自 useSecurityOverviewCharts），以及风险趋势、流量趋势两张明细表 -->
     <div class="chart-grid">
       <el-card class="sa-panel chart-card" shadow="never">
         <template #header>{{ content.trendTitle }}</template>
@@ -231,6 +234,7 @@
       </el-card>
     </div>
 
+    <!-- 地理风险地图：在世界地图上标注高风险目标 IP 的散点分布，数据来自 getSecurityGeoRisk -->
     <el-card class="sa-panel geo-map-card" shadow="never">
       <template #header>{{ extraContent.geoRiskTitle }}</template>
       <div v-if="hasGeoRiskData" class="geo-map-wrapper">
@@ -255,6 +259,8 @@ import { useSecurityOverviewCharts } from '../../../hooks/useSecurityOverviewCha
 import { securityPageContent } from '../../../constants/securityContent'
 import { securityExtraContent } from '../../../constants/securityExtraContent'
 
+// 从 echarts-maps 的 world.js 源码里用正则抠出 GeoJSON 并注册为 'world' 地图：
+// 该文件不是标准模块导出，只能解析其自执行代码里的 registerMap 调用拿到地图数据
 const worldMapMatch = worldMapSource.match(/echarts\.registerMap\('world',\s*([\s\S]*?)\);\s*\}\)\);?\s*$/)
 if (worldMapMatch?.[1]) {
   registerMap('world', JSON.parse(worldMapMatch[1]))
@@ -324,6 +330,9 @@ const geoRiskPointItems = computed(() => geoRiskItems.value
   })))
 
 const hasGeoRiskData = computed(() => geoRiskPointItems.value.length > 0)
+// 地理风险地图 option：底层 world 地图 + 上层 geo scatter 散点，
+// 每个点代表一个目标 IP，点大小随其关联任务数放大、颜色统一为警示红，
+// 用于直观呈现高风险 IP 的全球分布，数据来自 getSecurityGeoRisk
 const geoRiskOption = computed(() => ({
   backgroundColor: 'transparent',
   tooltip: {
@@ -392,6 +401,8 @@ const geoRiskOption = computed(() => ({
   ],
 }))
 
+// 加载总览数据：并行拉取“态势汇总”与“地理风险”两个接口减少串行等待；
+// 汇总对象用展开合并，保留默认字段结构，只覆盖后端实际返回的字段，避免前端空字段报错
 const loadSummary = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -412,6 +423,8 @@ const loadSummary = async () => {
   }
 }
 
+// 挂载时先读一次本地缓存的流量配置做即时预览，再订阅配置变更事件，
+// 使系统配置页保存后总览页的“流量开关/模式”能实时联动；onUnmounted 取消订阅避免内存泄漏
 onMounted(() => {
   const recentFlowConfig = readSecurityFlowConfigSync()
   applyFlowConfigPreview(recentFlowConfig)

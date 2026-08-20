@@ -87,6 +87,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 
+// 新增用户表单默认值：密码统一初始化为 Admin123!，角色默认 MANAGER，账号默认启用
 const createDefaultForm = () => ({
   username: '',
   displayName: '',
@@ -97,6 +98,7 @@ const createDefaultForm = () => ({
 
 const form = reactive(createDefaultForm())
 
+// 拉取用户列表（数据来自 userStore.fetchUserList）
 const loadUsers = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -109,6 +111,7 @@ const loadUsers = async () => {
   }
 }
 
+// 新增用户：前端先做必填校验，成功后重置表单并刷新列表
 const handleCreate = async () => {
   if (!form.username || !form.displayName || !form.password) {
     ElMessage.warning('请完整填写新增用户信息')
@@ -128,6 +131,7 @@ const handleCreate = async () => {
   }
 }
 
+// 启用/禁用账号：调用 store 的 updateUserStatusAction 取反当前状态后刷新列表
 const toggleUser = async (row) => {
   try {
     await userStore.updateUserStatusAction(row.id, !row.enable)
@@ -140,6 +144,7 @@ const toggleUser = async (row) => {
   }
 }
 
+// 重置密码为默认值 Admin123!：先弹确认框，取消（error === 'cancel'）时静默忽略
 const resetPassword = async (row) => {
   try {
     await ElMessageBox.confirm(

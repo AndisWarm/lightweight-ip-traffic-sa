@@ -128,6 +128,8 @@ const panel = ref({
 let timer = null
 let pollingStopped = false
 
+// 聚合所有会话的 metricTrend 时间点：按 analyzedAt 合并，报文/字节/会话数累加，
+// 行为分取同一时间点的最大值，得到跨会话的 5 秒趋势序列
 const trendPoints = computed(() => {
   const merged = new Map()
   for (const session of panel.value.sessions || []) {
@@ -149,6 +151,8 @@ const trendPoints = computed(() => {
   return Array.from(merged.values()).sort((left, right) => left.analyzedAt.localeCompare(right.analyzedAt))
 })
 
+// 汇总协议事件数：把各会话的 protocolDistribution 与 DNS/HTTP/TLS 事件计数合并，
+// 按数值降序、过滤掉 0 值，用于协议分布柱状图
 const protocolBars = computed(() => {
   const totals = {}
   const addProtocolCount = (name, value) => {
@@ -175,6 +179,7 @@ const protocolBars = computed(() => {
     .filter((item) => item.value > 0)
 })
 
+// 5 秒趋势图 option：双 y 轴（左报文数柱状、右行为分折线），x 轴取时间点的时:分:秒
 const trendOption = computed(() => ({
   tooltip: { trigger: 'axis' },
   legend: { data: ['报文数', '行为分'] },
@@ -204,6 +209,7 @@ const trendOption = computed(() => ({
   ],
 }))
 
+// 协议事件柱状图：展示 DNS/HTTP/TLS 等协议的事件计数，按协议名分组着色
 const protocolOption = computed(() => ({
   tooltip: { trigger: 'item' },
   xAxis: {
@@ -251,6 +257,7 @@ const clearPolling = () => {
   }
 }
 
+// 5 秒轮询：setTimeout 递归保证串行，pollingStopped 标志用于卸载时停止自调度
 const schedulePolling = () => {
   if (pollingStopped) {
     return
@@ -265,6 +272,7 @@ const schedulePolling = () => {
   }, 5000)
 }
 
+// 拉取 user 用户的实时监控面板数据（只读观察，不负责启停监控）
 const loadPanel = async () => {
   try {
     const resp = await getFlowMonitorObserverPanel({

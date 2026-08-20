@@ -1,3 +1,4 @@
+// 后端枚举码 → 前端展示文案的统一映射：页面只依赖这些函数取值，后端改枚举值只需改这一处。
 export const riskLevelTextMap = {
   LOW: '低风险',
   MEDIUM: '中风险',
@@ -18,6 +19,7 @@ export const sendStatusTextMap = {
   FAILED: '发送失败',
 }
 
+// 各枚举 → Element Plus 标签色的映射：风险等级/任务状态/发送状态/预警等级分别对应颜色，保证全局配色一致。
 export const riskLevelTagMap = {
   LOW: 'success',
   MEDIUM: 'warning',
@@ -43,6 +45,7 @@ export const alertLevelTagMap = {
   CRITICAL: 'danger',
 }
 
+// 取值函数统一兜底：未命中枚举时原样返回（或给"未知"/"info"），避免映射缺失导致页面空白或报错。
 export const getRiskLevelText = (value) => riskLevelTextMap[value] || value || '未知'
 export const getTaskStatusText = (value) => taskStatusTextMap[value] || value || '未知'
 export const getSendStatusText = (value) => sendStatusTextMap[value] || value || '未知'

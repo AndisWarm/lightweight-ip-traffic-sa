@@ -17,6 +17,8 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 
+// 根据当前路由 path 动态生成面包屑：先匹配详情页前缀，再回落到静态映射表，
+// 未匹配到的路由返回空数组，面包屑只保留固定的“安全业务”首项
 const breadcrumbItems = computed(() => {
   const path = route.path
 

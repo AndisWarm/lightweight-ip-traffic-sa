@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+// 按需从 element-plus/es/components 引入组件，只打包实际用到的部分，避免全量引入拖慢首屏。
 import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
 import { ElBreadcrumb, ElBreadcrumbItem } from 'element-plus/es/components/breadcrumb/index.mjs'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
@@ -24,6 +25,7 @@ import pinia from './pinia'
 import router from './router'
 import { installAuthExpiredListener } from './utils/auth-events'
 
+// 创建根应用实例，随后依次挂载插件与全局组件，最后才 mount，保证依赖就绪后再渲染。
 const app = createApp(App)
 
 ;[
@@ -50,10 +52,12 @@ const app = createApp(App)
   ElTable,
   ElTableColumn,
   ElTag,
+// 逐个全局注册按需引入的组件（用组件自带的 name），这样模板里无需局部 import 即可直接使用。
 ].forEach((component) => {
   app.component(component.name, component)
 })
 
+// 依次注册 Pinia、路由与 Loading 指令；最后安装 401 事件监听器（需在路由就绪后），再挂载到 #app。
 app.use(pinia)
 app.use(router)
 app.use(ElLoading)

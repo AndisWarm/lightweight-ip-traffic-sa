@@ -1,3 +1,4 @@
+// 实时流量监控接口：一个抓包会话从开启到停止的完整生命周期，以及观测面板与任务关系图数据。
 import request from './request'
 
 export const startFlowMonitorSession = (data) => request.post('/flow-monitor/sessions', data)

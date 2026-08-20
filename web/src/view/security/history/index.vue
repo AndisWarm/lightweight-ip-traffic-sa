@@ -173,6 +173,8 @@ const formatFlowMetricValue = (value) => {
   return value ? String(value) : ''
 }
 
+// 组装流量承接明细：把列表行里的多个流量指标字段拼成一行可读文本，
+// 只拼接非空字段，避免出现 "包=0/会话=0" 这类无意义片段
 const buildFlowMeta = (item) => {
   const parts = []
   if (item.flowCollectionMode) {
@@ -238,6 +240,7 @@ const buildTraceMeta = (item) => {
   return parts.join(' / ')
 }
 
+// 拉取检测历史：按事件类型（全部/任务/预警）与关键字分页查询，数据来自 getSecurityRecordList
 const loadHistory = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -267,10 +270,13 @@ const handlePageChange = (page) => {
   loadHistory()
 }
 
+// 跳转到历史记录对应的详情页（任务详情或预警详情，由后端下发 detailRoute）
 const openDetail = (path) => {
   router.push(path)
 }
 
+// 删除检测任务：先二次确认（会级联清理其历史/预警/评分/流量记录），
+// 删除最后一页的最后一条时回退一页再刷新，避免停留在空页
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(`确认删除检测任务 ${row.taskNo} 吗？删除后其历史、预警、评分和流量记录将一并清理。`, '删除确认', {

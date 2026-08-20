@@ -22,6 +22,8 @@ const props = defineProps({
   },
 })
 
+// 节点分类元信息：把后端返回的 category 字符串映射为中文名、颜色与节点大小，
+// 让关系图里目标 IP / 对端 IP / 协议 / 端口 / 主机头等不同类型一眼可区分
 const categoryMeta = {
   'target-ip': { name: '目标 IP', color: '#12344d', symbolSize: 58 },
   'peer-ip': { name: '对端 IP', color: '#3a7afe', symbolSize: 40 },
@@ -50,6 +52,8 @@ const categoryIndexMap = computed(() => {
   return map
 })
 
+// ECharts 力导向关系图 option：把 props.graph 的 nodes/edges 转成带分类、权重、边标签的图数据，
+// 节点大小随 value 权重放大、边线宽随关系权重加粗，便于直观看出哪些节点是聚合核心
 const graphOption = computed(() => {
   const nodes = (props.graph?.nodes || []).map((node) => {
     const meta = categoryMeta[node.category] || { name: node.category || '节点', color: '#5b6b7a', symbolSize: 28 }

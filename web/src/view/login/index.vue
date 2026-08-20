@@ -55,12 +55,16 @@ const form = reactive({
   password: 'Admin123!',
 })
 
+// 表单校验规则：用户名与密码均为必填，失焦时触发校验，避免空值直接提交到后端
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
+// 登录核心流程：先做本地表单校验，再通过 Pinia 的 loginByPassword 换取并持久化 token，
+// 成功后用 replace 跳转（避免登录页残留在历史记录里可被后退回到）
 const handleLogin = async () => {
+  // submitting 防抖：登录请求未返回前禁止重复提交
   if (submitting.value) {
     return
   }

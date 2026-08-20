@@ -1,3 +1,4 @@
+// 与 securityContent 互补的少量文案（热力图、实时监控、操作审计），单独成文件便于按需引入，避免主内容文件过于臃肿。
 export const securityExtraContent = {
   overview: {
     geoRiskTitle: '风险 IP 热力图',

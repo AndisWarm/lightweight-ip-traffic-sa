@@ -62,6 +62,7 @@ const filters = reactive({
   actor: '',
 })
 
+// 拉取审计日志：按分类/状态/操作人筛选，固定取前 50 条；同时取回可选分类用于筛选下拉
 const loadData = async () => {
   loading.value = true
   try {

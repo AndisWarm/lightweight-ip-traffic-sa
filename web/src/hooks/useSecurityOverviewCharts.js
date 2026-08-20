@@ -11,9 +11,11 @@ import {
 
 import { getRiskLevelText } from '../constants/security'
 
+// 按需注册 ECharts 模块（渲染器/图表/组件），只打包用到的部分，避免全量引入把产物体积撑大。
 use([CanvasRenderer, LineChart, PieChart, ScatterChart, MapChart, GridComponent, GeoComponent, TooltipComponent, LegendComponent])
 
 export const useSecurityOverviewCharts = (summary) => {
+  // 把 summary 里的趋势原始数组加工成"日期/任务数/预警数"三条对齐序列，供折线图直接使用。
   const trendSeries = computed(() => {
     const trend = Array.isArray(summary.value?.trend) ? summary.value.trend : []
     return {
@@ -23,6 +25,7 @@ export const useSecurityOverviewCharts = (summary) => {
     }
   })
 
+  // 风险分布：过滤掉 count 为 0 的等级，并把后端枚举码转成中文文案，直接喂给饼图。
   const riskDistribution = computed(() => {
     const distribution = Array.isArray(summary.value?.riskDistribution) ? summary.value.riskDistribution : []
     return distribution
@@ -33,12 +36,14 @@ export const useSecurityOverviewCharts = (summary) => {
       }))
   })
 
+  // 空数据守卫：任一维度有非零值才认为有趋势，否则页面显示空态，而不是画一条全零的折线。
   const hasTrendData = computed(() => (
     trendSeries.value.taskValues.some((value) => value > 0) ||
     trendSeries.value.alertValues.some((value) => value > 0)
   ))
   const hasDistributionData = computed(() => riskDistribution.value.length > 0)
 
+  // 折线图与饼图的 ECharts option 都用 computed 包裹，数据变化时自动重算并驱动图表更新。
   const trendOption = computed(() => ({
     tooltip: {
       trigger: 'axis',
@@ -88,6 +93,7 @@ export const useSecurityOverviewCharts = (summary) => {
     series: [
       {
         name: '风险等级分布',
+        // 环形图：radius 内外半径形成甜甜圈效果，center 微调垂直位置避免与图例重叠。
         type: 'pie',
         radius: ['40%', '68%'],
         center: ['50%', '45%'],

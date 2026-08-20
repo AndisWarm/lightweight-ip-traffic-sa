@@ -209,6 +209,8 @@ const selectedWhoisSources = ref([])
 const selectedReputationSources = ref([])
 const selectedAttackSurfaceSources = ref([])
 
+// 表单默认值：与后端安全配置结构一一对应，用于首次进入时的兜底展示；
+// 阈值、权重默认值与后端评分口径保持一致
 const createDefaultForm = () => ({
   whoisEndpoint: 'geolite2+rdap',
   reputationEndpoint: 'local-blacklist',
@@ -274,6 +276,8 @@ const flowModeOptions = [
   { label: '在线抓包', value: 'online_capture' },
 ]
 
+// 权重总分校验：四个评分权重相加必须严格等于 1.0000（按万分位换算成 10000 基点比较），
+// 避免浮点累加误差导致校验误判，因此统一放大 10000 倍用整数比较
 const weightSumBasisPoint = computed(() => {
   return [
     form.weights.whoisWeight,
@@ -301,6 +305,8 @@ const getSourceTarget = (groupKey) => {
   }
 }
 
+// 解析后端的数据源配置字符串（如 'geolite2+rdap'）：拆出 '+' 连接的各个源，
+// 过滤掉不在可选卡片里的值；'disabled'/'local-demo' 有特殊含义需单独处理
 const decodeEndpointSelection = (value, cards) => {
   const trimmed = (value || '').trim().toLowerCase()
   if (!trimmed || trimmed === 'disabled') {
@@ -320,6 +326,8 @@ const normalizeSelectedItems = (items) => {
   return normalized.filter((item) => item !== 'local-demo')
 }
 
+// 反向编码：把已选数据源按可选卡片顺序拼回 '+' 连接字符串（如 'geolite2+rdap'），
+// 全选 local-demo 或为空时编码为特殊值，保证与后端存储格式一致
 const encodeEndpointSelection = (selectedItems, allCards) => {
   const items = unique(selectedItems)
   if (items.includes('local-demo')) {
@@ -414,6 +422,7 @@ watch(
   { deep: true },
 )
 
+// 流量开关/模式变化时立即广播给其它页面（如总览页），实现跨页面的配置联动预览
 watch(
   () => [form.flowEnabled, form.flowMode],
   ([flowEnabled, flowMode]) => {
@@ -421,6 +430,8 @@ watch(
   },
 )
 
+// 保存配置：先校验权重总和，成功后用后端返回的完整配置覆盖表单，
+// 并通过 emitSecurityFlowConfigSync 广播流量开关变更，让总览页等页面实时联动
 const handleSave = async () => {
   if (!isWeightSumValid.value) {
     ElMessage.error('评分权重总和必须严格等于 1.0000')

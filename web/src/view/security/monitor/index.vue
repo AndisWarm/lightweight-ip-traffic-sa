@@ -221,6 +221,8 @@ const applyMonitorDefaults = (config, interfaces) => {
   form.interfaceName = matched ? matched.name : ''
 }
 
+// 初始化：并行拉取安全配置、网卡列表与当前进行中的会话；
+// 若存在运行中的会话则自动恢复轮询，实现刷新页面后监控状态不丢
 const loadMonitorDefaults = async () => {
   initializing.value = true
   errorMessage.value = ''
@@ -273,6 +275,8 @@ const clearPolling = () => {
   }
 }
 
+// 5 秒轮询：用 setTimeout 递归实现（而非 setInterval），保证上一轮请求完成后才开始下一轮，
+// 避免网络慢时请求堆积；pollingStopped 标志用于组件卸载后停止自调度
 const schedulePolling = () => {
   if (pollingStopped) {
     return
@@ -290,6 +294,8 @@ const schedulePolling = () => {
   }, 5000)
 }
 
+// 弹出最新预警：按 alertId 去重，只在出现"新预警"时弹一次，避免每轮轮询重复打断；
+// 用户点"已知"后跳转到预警详情
 const presentLatestAlert = async (latestAlert) => {
   if (!latestAlert?.alertId || latestAlert.alertId === lastPresentedAlertId.value) {
     return
@@ -312,6 +318,7 @@ const presentLatestAlert = async (latestAlert) => {
   }
 }
 
+// 刷新监控会话数据并检查是否产生新预警；请求异常时停止轮询防止持续报错
 const refreshSession = async () => {
   if (!session.value?.sessionId) {
     return
@@ -326,6 +333,7 @@ const refreshSession = async () => {
   }
 }
 
+// 启动监控：调用后端创建会话，成功后重置预警去重标记并进入轮询
 const handleStart = async () => {
   if (!form.interfaceName.trim()) {
     ElMessage.error('请选择需要监听的网卡')
@@ -350,6 +358,7 @@ const handleStart = async () => {
   }
 }
 
+// 暂停监控：停止会话并立即清空轮询定时器，避免暂停后仍持续请求
 const handleStop = async () => {
   if (!session.value?.sessionId) return
   stopping.value = true

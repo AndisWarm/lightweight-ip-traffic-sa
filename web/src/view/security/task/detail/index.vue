@@ -19,6 +19,7 @@
     />
 
     <div v-else v-loading="loading" class="detail-grid">
+      <!-- 基本信息：任务编号/目标 IP/状态/评分等核心字段，数据来自 getSecurityTaskDetail -->
       <el-card class="sa-panel" shadow="never">
         <template #header>{{ content.sections.basic }}</template>
         <el-descriptions v-if="taskDetail" :column="1" border>
@@ -48,6 +49,7 @@
         </el-descriptions>
       </el-card>
 
+      <!-- 基础画像：国家/地区/运营商/经纬度等地理与 WHOIS 归属信息，缺失字段回落到"库未提供" -->
       <el-card class="sa-panel" shadow="never">
         <template #header>{{ content.sections.baseInfo }}</template>
         <el-descriptions v-if="taskDetail?.baseInfo" :column="1" border>
@@ -68,6 +70,7 @@
         <el-empty v-else :description="content.empty.baseInfo" />
       </el-card>
 
+      <!-- 评分明细：信誉/端口/地理风险等特征因子、评分因子权重与贡献值、证据链 -->
       <el-card class="sa-panel" shadow="never">
         <template #header>{{ content.sections.score }}</template>
         <el-descriptions v-if="taskDetail?.features || taskDetail?.score" :column="1" border>
@@ -126,6 +129,7 @@
         <el-empty v-else :description="content.empty.score" />
       </el-card>
 
+      <!-- 流量增强：采集模式/解析器/真实指标/行为信号/采集历史与证据时间线，数据来自任务详情的 flow 字段 -->
       <el-card class="sa-panel" shadow="never">
         <template #header>{{ content.sections.flow }}</template>
         <el-descriptions v-if="taskDetail?.flow" :column="1" border>
@@ -253,6 +257,7 @@
         <el-empty v-else :description="content.empty.flow" />
       </el-card>
 
+      <!-- 关联证据：按证据分组展示，来源于 features.evidenceGroups -->
       <el-card class="sa-panel" shadow="never">
         <template #header>关联证据展示</template>
         <div v-if="evidenceGroups.length" class="evidence-groups">
@@ -269,6 +274,7 @@
         <el-empty v-else description="当前暂无可展示的关联证据" />
       </el-card>
 
+      <!-- IP-流量关联图谱：复用 SecurityRelationGraph 组件，数据来自 getSecurityTaskRelationGraph -->
       <el-card class="sa-panel" shadow="never">
         <template #header>IP-流量关联图谱</template>
         <SecurityRelationGraph :graph="relationGraph" />
@@ -278,6 +284,7 @@
         </el-descriptions>
       </el-card>
 
+      <!-- 预警信息：任务触发的预警等级/标题/通知渠道/发送状态 -->
       <el-card class="sa-panel" shadow="never">
         <template #header>{{ content.sections.alert }}</template>
         <el-descriptions v-if="taskDetail?.alert" :column="1" border>
@@ -328,7 +335,10 @@ const errorMessage = ref('')
 const taskId = computed(() => route.params.id)
 const normalizedTaskId = computed(() => Number.parseInt(String(taskId.value), 10))
 
+// 数值格式化：0 是合法值需要显示 '0'（区分"未传/无值"与"真的为 0"），
+// 对应后端 *int 指针字段，nil 时为 undefined 才显示 '-'
 const formatValue = (value) => (value === 0 || value ? value : '-')
+// 布尔格式化：只有真正 boolean 类型才转换，避免后端 *bool 指针的 nil 被误当成 false
 const formatBoolean = (value) => (typeof value === 'boolean' ? (value ? '是' : '否') : '-')
 const formatChain = (items) => (Array.isArray(items) && items.length ? items.join(' -> ') : '-')
 const formatWindow = (value) => (value ? `${value} 秒` : '-')
@@ -347,6 +357,8 @@ const formatByteCount = (value) => {
   }
   return `${value} B`
 }
+// 基础属性值格式化：空值/'-'/'UNKNOWN' 统一回落到中文占位（fallback），
+// 0 需保留显示，避免把合法数值 0 当成缺失
 const formatBaseInfoValue = (value, fallback = '未获取') => {
   if (value === 0) {
     return '0'
@@ -381,6 +393,7 @@ const formatAccuracyRadius = (value) => {
   }
   return `${radius} km`
 }
+// 把对象/数组安全转成缩进 JSON 字符串用于 <pre> 展示；空对象或解析失败给 '-'，避免页面抛错
 const formatJson = (value) => {
   if (!value || (typeof value === 'object' && !Object.keys(value).length)) {
     return '-'
@@ -418,6 +431,8 @@ const hasFlowDebugPayload = computed(() => {
     flow.evidenceSnapshot,
   ].some((item) => item && typeof item === 'object' && Object.keys(item).length)
 })
+// 判断是否已有真实流量指标（包/字节/会话/窗口任一 >0 或存在解析指标），
+// 用于区分"真实流量承接结果"与"原型入口/状态承接"两种展示口径
 const hasRealFlowMetrics = computed(() => {
   const flow = taskDetail.value?.flow
   if (!flow) {
@@ -465,6 +480,8 @@ const realFlowStats = computed(() => {
   return items
 })
 
+// 真实流量信号：从 flow 及其 parsedMetrics 里抽取 DNS/HTTP/TLS、方向性、端口密度、
+// 载荷熵等行为信号；字段优先取 flow 顶层、缺失时回落到 parsedMetrics 兜底
 const realFlowSignals = computed(() => {
   const flow = taskDetail.value?.flow
   if (!flow) {
@@ -678,6 +695,8 @@ const entryStateFacts = computed(() => {
   return items
 })
 
+// 加载任务详情：先校验路由 ID 是否为合法正整数（防止非数字 ID 打到后端），
+// 再并行拉取任务详情与 IP-流量关联图谱；不存在时展示统一 notFound 文案
 const loadTaskDetail = async () => {
   if (!Number.isInteger(normalizedTaskId.value) || normalizedTaskId.value <= 0) {
     errorMessage.value = content.notFound

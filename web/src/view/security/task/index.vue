@@ -53,6 +53,7 @@
     <el-card class="sa-panel list-panel" shadow="never">
       <template #header>{{ content.listCardTitle }}</template>
 
+      <!-- 列表统计：总任务数/高危/严重/失败，基于当前已加载列表计算（useSecurityListStats） -->
       <div class="stats-toolbar">
         <el-tag>{{ content.quickStats.total }}：{{ taskStats.total }}</el-tag>
         <el-tag type="warning">{{ content.quickStats.highRisk }}：{{ taskStats.highRisk }}</el-tag>
@@ -67,6 +68,7 @@
         :title="`${content.activeFilterPrefix}${activeFilterText}`"
       />
 
+      <!-- 筛选工具栏：按目标 IP / 任务状态 / 风险等级 / 排序方式过滤，任一条件变化即重新请求 -->
       <div class="filter-toolbar">
         <el-input
           v-model="filters.targetIp"
@@ -245,6 +247,8 @@ const { stats: taskStats, activeFilterText } = useSecurityListStats(
   }
 )
 
+// 校验 IPv4/IPv6 地址：IPv4 用点分十进制每段 0-255 的精确正则，IPv6 覆盖完整/缩写/压缩多种写法，
+// 与 isValidDomain 一起构成创建任务前的输入校验，避免非法输入直接提交后端
 const isValidIP = (value) => {
   const input = value.trim()
   if (!input) {
@@ -257,6 +261,7 @@ const isValidIP = (value) => {
   return ipv4Pattern.test(input) || ipv6Pattern.test(input)
 }
 
+// 校验域名：总长不超过 253、不能以点开头结尾、至少两段、每段符合主机名规范
 const isValidDomain = (value) => {
   const input = value.trim()
   if (!input || input.length > 253 || input.startsWith('.') || input.endsWith('.')) {
@@ -269,6 +274,7 @@ const isValidDomain = (value) => {
   return labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))
 }
 
+// 自定义表单校验器：目标输入必须是合法 IP 或域名，否则在失焦时给出对应提示
 const validateTargetInput = (rule, value, callback) => {
   const input = (value || '').trim()
   if (!input) {
@@ -282,12 +288,15 @@ const validateTargetInput = (rule, value, callback) => {
   callback()
 }
 
+// 创建任务表单仅校验目标输入字段，使用上面的自定义校验器
 const formRules = {
   targetIp: [{ validator: validateTargetInput, trigger: 'blur' }],
 }
 
+// 判断当前列表里是否存在待执行/执行中的任务：存在才需要轮询刷新状态
 const hasActiveTask = () => tasks.value.some((item) => ['PENDING', 'RUNNING'].includes(item.taskStatus))
 
+// 停止轮询并清空定时器；组件卸载前调用，避免页面离开后仍持续请求
 const stopTaskPolling = () => {
   if (!taskPollingTimer) {
     return
@@ -296,6 +305,7 @@ const stopTaskPolling = () => {
   taskPollingTimer = null
 }
 
+// 启动 3 秒轮询：有进行中任务时静默刷新列表；若上一次请求还在途则跳过本轮，避免请求堆积
 const startTaskPolling = () => {
   if (taskPollingTimer) {
     return
@@ -308,6 +318,7 @@ const startTaskPolling = () => {
   }, 3000)
 }
 
+// 根据是否有进行中任务，自动开启或停止轮询（有则启动、无则停止）
 const syncTaskPolling = () => {
   if (hasActiveTask()) {
     startTaskPolling()
@@ -316,6 +327,7 @@ const syncTaskPolling = () => {
   stopTaskPolling()
 }
 
+// 拉取任务列表：根据筛选条件与排序选项请求分页数据；silent 用于轮询时静默刷新不闪 loading
 const loadTasks = async (options = {}) => {
   const silent = options.silent === true
   if (!silent) {
@@ -349,6 +361,7 @@ const loadTasks = async (options = {}) => {
   }
 }
 
+// 创建检测任务：先校验表单与权限，成功后清空输入、回到第一页重新加载列表
 const submitTask = async () => {
   if (submitting.value) {
     return
@@ -383,6 +396,7 @@ const submitTask = async () => {
   }
 }
 
+// 跳转到任务详情页，携带任务 ID 作为路由参数
 const openDetail = (taskId) => {
   router.push(`/security/task/${taskId}`)
 }

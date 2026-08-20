@@ -82,12 +82,14 @@ const errorMessage = ref('')
 
 const alertId = computed(() => route.params.id)
 
+// 来源类型中文映射：FLOW_MONITOR 表示来自实时监控（未绑定任务），TASK 表示任务检测触发
 const formatSourceType = (value) => {
   if (value === 'FLOW_MONITOR') return '实时监控'
   if (value === 'TASK') return '任务检测'
   return value || '-'
 }
 
+// 加载预警详情；后端返回 'alert not found' 时统一替换为 notFound 文案，避免直接暴露英文错误
 const loadAlertDetail = async () => {
   loading.value = true
   errorMessage.value = ''

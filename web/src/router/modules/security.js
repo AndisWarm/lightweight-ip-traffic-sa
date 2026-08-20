@@ -1,10 +1,13 @@
+// Layout 是带侧边栏/顶栏的外壳组件，安全域与系统域页面都嵌在其中渲染，避免每页重复写布局。
 import Layout from '../../view/layout/index.vue'
 
+// 安全域 + 系统域路由集中定义：父路由统一挂 Layout 与 requiresAuth，子路由只声明业务页面与可访问角色。
 export default [
   {
     path: '/security',
     component: Layout,
     meta: {
+      // 父级 requiresAuth 会被子路由通过 to.matched 继承，无需每个子路由重复声明。
       requiresAuth: true,
     },
     children: [
@@ -14,6 +17,7 @@ export default [
         component: () => import('../../view/security/overview/index.vue'),
         meta: {
           title: '态势总览',
+          // roles 是可访问角色白名单：三个角色都能看；越靠后的页面（配置/用户面板）角色收得越窄。
           roles: ['ADMIN', 'MANAGER', 'USER'],
         },
       },
@@ -92,6 +96,7 @@ export default [
     ],
   },
   {
+    // 系统域：仅 ADMIN 可访问（用户管理、操作审计），父级直接声明 roles 整段拦截，无需逐个子路由判断。
     path: '/system',
     component: Layout,
     meta: {
