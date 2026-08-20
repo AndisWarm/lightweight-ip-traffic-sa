@@ -13,6 +13,8 @@ import (
 
 var ErrExternalProviderUnavailable = errors.New("external provider unavailable")
 
+// 外部采集器在自身超时之外额外留 1 秒收尾窗口：给 goroutine 里收尾逻辑（关闭连接、写日志）留时间，
+// 避免外层把"刚用完自身超时但已正常返回"的慢调用误判成整体超时。
 const externalCollectorCompletionGrace = time.Second
 
 // BaseInfoSourceProvider 用于封装基础信息来源数据源访问能力。
@@ -65,6 +67,8 @@ func runExternalCollectorStep[T any](
 	execute func(context.Context) (T, error),
 	validate func(T) error,
 ) (T, error) {
+	// 外部源（RDAP/AbuseIPDB/Nmap）在带超时的 context 里执行；外层 runCollectorStep 的截止时间额外放宽 1 秒，
+	// 让外部源即使刚好用满自身超时，也不会被外层直接判超，避免把"已完成的慢调用"误判为失败。
 	return runCollectorStep(
 		stepName,
 		targetIP,
@@ -90,6 +94,8 @@ func extendExternalCollectorDeadline(timeout time.Duration) time.Duration {
 }
 
 // resolveExternalCollectorTimeout 用于解析ExternalCollectorTimeout。
+// 步骤超时按"启用了哪些子源"动态放大：例如 RDAP 启用时，步骤超时至少要覆盖 RDAP 自身超时再加 1 秒，
+// 否则外层会在外部源尚未返回前提前超时，把本可用的结果误判为降级。
 func resolveExternalCollectorTimeout(stepName string, cfg config.SecurityConfig) time.Duration {
 	timeout := collectorTimeout
 	switch stepName {
@@ -158,6 +164,7 @@ func pickMinDuration(values []time.Duration, fallback time.Duration) time.Durati
 }
 
 // unavailableBaseInfoProvider 用于封装unavailable基础信息数据源访问能力。
+// 兜底 provider：当解析出的数据源无法实例化时，返回统一的不可用错误，由上层捕获并按降级处理，而不是 panic。
 type unavailableBaseInfoProvider struct {
 	sourceName string
 }

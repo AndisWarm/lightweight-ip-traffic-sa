@@ -68,6 +68,8 @@ func (s *TaskService) CreateTaskWithActor(req requestModel.CreateTaskRequest, ac
 		createdBy = global.AppConfig.Security.DefaultCreatedBy
 	}
 
+	// 任务先以 PENDING 落库，随后立即置为 RUNNING：两步分开是为了
+	// 万一后续"置 RUNNING"失败，还能用 PENDING 状态做重试补偿，而不是一上来就卡死在中间态。
 	task := securityModel.IPTask{
 		TaskNo:       buildTaskNo(now),
 		InputType:    resolvedTarget.InputType,
@@ -87,6 +89,7 @@ func (s *TaskService) CreateTaskWithActor(req requestModel.CreateTaskRequest, ac
 	}
 
 	startedAt := time.Now()
+	// 置为 RUNNING 并记录开始时间；失败则整个创建请求报错，任务停留在 PENDING 供补偿。
 	if err := repo.TaskRepository.UpdateStatus(global.DB, task.ID, map[string]interface{}{
 		"task_status":   "RUNNING",
 		"started_at":    &startedAt,
@@ -100,8 +103,11 @@ func (s *TaskService) CreateTaskWithActor(req requestModel.CreateTaskRequest, ac
 	task.StartedAt = &startedAt
 	task.UpdatedAt = startedAt
 
+	// 主动清总览缓存，让首页统计（今日检测数/风险分布）尽快反映新任务，而不是等缓存过期。
 	_ = utils.CacheDelete(utils.SecurityDashboardSummaryCacheKey)
 
+	// 关键：用 goroutine 异步执行采集+评分+落库，接口立即返回 taskID，
+	// 可能耗时的外部调用（RDAP/端口探测/抓包）不会阻塞 HTTP 响应。
 	go taskPipelineAsyncExecutor(securityTaskExecutionContext{
 		TaskID:   task.ID,
 		TaskNo:   task.TaskNo,
@@ -135,6 +141,8 @@ func (s *TaskService) runTaskPipeline(task securityTaskExecutionContext) {
 		return
 	}
 
+	// 采集产物涉及多张表（画像/特征/评分/预警/流量三表 + 任务状态），
+	// 用单个事务保证"要么全部落库、要么全部回滚"，避免出现"评分写了但预警没写"的不一致。
 	err = global.DB.Transaction(func(tx *gorm.DB) error {
 		if err := repo.BaseInfoRepository.Create(tx, &pipelineResult.BaseInfo); err != nil {
 			return err
@@ -146,6 +154,7 @@ func (s *TaskService) runTaskPipeline(task securityTaskExecutionContext) {
 			return err
 		}
 
+		// 预警记录需要关联刚创建的评分主键，先写评分拿到自增 ID 再回填外键。
 		if pipelineResult.AlertRecord != nil {
 			scoreID := pipelineResult.RiskScore.ID
 			pipelineResult.AlertRecord.ScoreID = &scoreID
@@ -245,6 +254,8 @@ func (s *TaskService) GetTaskDetail(taskID uint64) (responseModel.TaskDetailResp
 	repo := repository.RepositoryGroupApp.SecurityRepositoryGroup
 	cacheKey := utils.BuildTaskDetailCacheKey(taskID)
 
+	// 详情先查缓存：任务完成后数据不再变化，适合短 TTL 缓存；缓存命中还需校验可用性，
+	// 不完整的历史缓存直接删除并回源数据库，避免返回半成品数据。
 	var cached responseModel.TaskDetailResponse
 	if hit, err := utils.CacheGetJSON(cacheKey, &cached); err == nil && hit {
 		if isTaskDetailCacheUsable(cached) {
@@ -429,6 +440,8 @@ func (s *TaskService) DeleteTask(taskID uint64) error {
 		alertIDs = append(alertIDs, alert.ID)
 	}
 
+	// 外键未开 ON DELETE CASCADE，这里在事务内显式按"子表→主表"顺序手动级联删除，
+	// 删除更可控（可在删除前做检查），也避免误删。最后才删主表。
 	err = global.DB.Transaction(func(tx *gorm.DB) error {
 		if err := repo.AlertRepository.DeleteByTaskID(tx, taskID); err != nil {
 			return err
@@ -460,6 +473,8 @@ func (s *TaskService) DeleteTask(taskID uint64) error {
 		return WrapServiceError(ServiceErrorCategoryInternal, "删除检测任务失败，请稍后重试", err)
 	}
 
+	// 删除后同步清理任务详情缓存、总览缓存和关联预警详情缓存，
+	// 避免缓存里残留"已删除任务/预警"的幽灵数据。
 	cacheKeys := []string{utils.BuildTaskDetailCacheKey(taskID), utils.SecurityDashboardSummaryCacheKey}
 	for _, alertID := range alertIDs {
 		cacheKeys = append(cacheKeys, utils.BuildAlertDetailCacheKey(alertID))
@@ -481,6 +496,7 @@ func (s *TaskService) DeleteTask(taskID uint64) error {
 
 // markTaskFailed 用于标记任务执行状态。
 func (s *TaskService) markTaskFailed(taskID uint64, errorMessage string) error {
+	// 失败统一落到 FAILED 终态并记录错误信息，保证不会出现"永远卡在 RUNNING"的僵尸任务。
 	finishedAt := time.Now()
 	return repository.RepositoryGroupApp.SecurityRepositoryGroup.TaskRepository.UpdateStatus(global.DB, taskID, map[string]interface{}{
 		"task_status":   "FAILED",
@@ -492,6 +508,8 @@ func (s *TaskService) markTaskFailed(taskID uint64, errorMessage string) error {
 
 // buildTaskNo 用于构建任务No。
 func buildTaskNo(now time.Time) string {
+	// 编号由 时间戳 + 纳秒 + 进程ID + 原子自增序号 四段组成，
+	// 分别解决"同一秒建多个任务""多实例部署""同一进程并发"的唯一性冲突。
 	return fmt.Sprintf("TASK-%s-%09d-%d-%d", now.Format("20060102150405"), now.Nanosecond(), os.Getpid(), taskNoSequence.Add(1))
 }
 
@@ -509,6 +527,7 @@ func validateCreateTaskRequest(req requestModel.CreateTaskRequest) (requestModel
 	if target == "" {
 		return requestModel.ResolvedTaskTarget{}, ErrTaskTargetIPRequired
 	}
+	// 直接是合法 IP 就用它；否则按域名处理并解析成 IP，两种输入统一收敛为 TargetIP。
 	if parsed := net.ParseIP(target); parsed != nil {
 		return requestModel.ResolvedTaskTarget{
 			InputType:  "IP",
@@ -570,6 +589,7 @@ func isValidDomainName(value string) bool {
 
 // resolveDomainToIP 用于解析DomainToIP。
 func resolveDomainToIP(domain string) (string, error) {
+	// 域名解析设 3 秒超时，避免恶意或失效域名把创建任务的接口拖住。
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -577,6 +597,7 @@ func resolveDomainToIP(domain string) (string, error) {
 	if err != nil || len(addresses) == 0 {
 		return "", fmt.Errorf("resolve domain failed: %w", err)
 	}
+	// 优先取 IPv4：后续 GeoLite2/端口探测等链路对 IPv4 支持更完整；没有 v4 才退回首个结果。
 	for _, item := range addresses {
 		if ip4 := item.IP.To4(); ip4 != nil {
 			return ip4.String(), nil

@@ -29,6 +29,8 @@ func (p nmapAttackSurfaceProvider) Name() string {
 
 // CollectAttackSurface 用于采集目标 IP 的攻击面信息。
 func (p nmapAttackSurfaceProvider) CollectAttackSurface(ctx context.Context, targetIP string, baseInfo BaseInfoCollectedData, cfg config.SecurityConfig) (AttackSurfaceCollectedData, error) {
+	// Nmap 是攻击面"增强开关"而非主链路：启用后优先走 Nmap，一旦不可用（未安装、超时、执行失败），
+	// 立即回退到 Go 原生有限端口探测，保证攻击面维度始终有结果、不因增强能力故障而中断。
 	nmapResult, err := runNmapAttackSurface(ctx, targetIP, cfg)
 	if err != nil {
 		fallback, fallbackErr := limitedPortScanProvider{}.CollectAttackSurface(ctx, targetIP, baseInfo, cfg)
@@ -99,6 +101,8 @@ func runNmapAttackSurface(ctx context.Context, targetIP string, cfg config.Secur
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// -Pn 跳过主机存活探测（目标可能禁 ping，避免被误判为不可达）、-n 不做 DNS 反解（加速）、
+	// -T4 激进时序、-p 限定端口、-oG - 输出 grepable 格式到 stdout，便于按行解析。
 	args := []string{
 		"-Pn",
 		"-n",
@@ -126,6 +130,8 @@ func parseNmapGrepableOutput(output string) nmapScanResult {
 	}
 
 	lines := strings.Split(output, "\n")
+	// grepable 输出形如 "Host: ... Ports: 22/open/tcp//ssh///,80/open/..."，
+	// 只需解析含 "Ports:" 的行，按 "," 切分端口项、按 "/" 取端口号和状态，状态为 open 才计入开放端口。
 	for _, line := range lines {
 		if !strings.Contains(line, "Ports:") {
 			continue

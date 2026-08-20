@@ -85,6 +85,7 @@ func buildSourceCoverageItems(counter map[string]int64) []dashboardSourceCoverag
 			Count:  count,
 		})
 	}
+	// 来源覆盖按"命中次数降序"排序，次数相同再按来源名升序，保证总览页呈现稳定不跳动。
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Count == items[j].Count {
 			return items[i].Source < items[j].Source
@@ -378,6 +379,7 @@ func formatSourceChain(items []string) string {
 
 // classifyEvidenceCategory 用于执行classifyEvidenceCategory流程。
 func classifyEvidenceCategory(source string) (string, string) {
+	// 证据按来源名关键词归入固定类别，前端据此分组展示；来源名是采集器约定的稳定标识。
 	lower := strings.ToLower(strings.TrimSpace(source))
 	switch {
 	case strings.Contains(lower, "geolite2"), strings.Contains(lower, "rdap"), strings.Contains(lower, "p0-base-info"):
@@ -424,6 +426,8 @@ func buildScoreFactorDisplayBasis(
 	flowStatus string,
 	flowSummary string,
 ) string {
+	// 每个评分因子的"展示依据"把来源链和规则说明拼成前端可读的一句话，
+	// 是评分可解释性的落点：用户能看到每个维度凭什么打分。
 	switch item.Key {
 	case "whois":
 		return joinDisplayParts(
@@ -588,6 +592,8 @@ func sanitizeAttackSurfaceChain(chain []string) []string {
 	if len(items) == 0 {
 		return nil
 	}
+	// 只要链路里包含"有限端口探测"，就把攻击面来源归一化成它：
+	// 避免同时出现 "limited-port-scan" 与 "nmap" 造成展示冗余，统一口径。
 	if containsSourcePattern(items, "limited-port-scan") {
 		return []string{"limited-port-scan"}
 	}
@@ -600,6 +606,7 @@ func sanitizeAttackSurfaceDataSources(sources []string) []string {
 	if len(items) == 0 {
 		return nil
 	}
+	// 有有限端口探测时，去掉 nmap 增强项：nmap 只是增强/回退能力，不作为独立来源计入覆盖统计。
 	if !containsSourcePattern(items, "limited-port-scan") {
 		return items
 	}
@@ -685,6 +692,8 @@ func buildRecordFlowSummaryWithCollection(
 	targetPortDensity float64,
 	dominantDirection string,
 ) string {
+	// 先取采集摘要/持久化摘要作主体，再把解析器、窗口、协议事件、行为分等指标作为补充拼接，
+	// 让历史记录一条流量条目就能看清"来源 + 关键指标"。
 	baseSummary := ""
 	if summary := strings.TrimSpace(collectionSummary); summary != "" {
 		baseSummary = summary

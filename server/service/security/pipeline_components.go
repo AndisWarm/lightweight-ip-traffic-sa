@@ -17,11 +17,15 @@ import (
 	"lightweight-ip-traffic-sa/server/utils"
 )
 
+// collectorTimeout 是单个采集步骤的硬超时。设为 2 秒是为了让整条异步任务链路
+// 不会因为某个外部数据源（GeoLite2/RDAP/端口探测/抓包）长时间无响应而卡死。
 const collectorTimeout = 2 * time.Second
 
 // CollectorErrorKind 用于限定采集器错误分类取值。
 type CollectorErrorKind string
 
+// 四类错误把"超时、外部源不可用、返回数据不合法、程序内部异常"区分开，
+// 上层据此决定是否降级、是否重试、审计里记什么类别，而不是拿到一个笼统的 error。
 const (
 	CollectorErrorTimeout     CollectorErrorKind = "TIMEOUT"
 	CollectorErrorUnavailable CollectorErrorKind = "UNAVAILABLE"
@@ -300,6 +304,8 @@ func (c DemoReputationCollector) Collect(targetIP string, cfg config.SecurityCon
 		collectorTimeout,
 		utils.CollectorCacheTTL(),
 		func() (ReputationCollectedData, error) {
+			// 用目标 IP 的稳定哈希生成 30~84 之间的确定性分数：
+			// 同一 IP 每次演示结果一致，便于演示与测试断言，而不是随机抖动。
 			hashValue := stableHash(targetIP)
 			return ReputationCollectedData{
 				IP:              targetIP,
@@ -339,6 +345,8 @@ func (c DemoAttackSurfaceCollector) Collect(targetIP string, baseInfo BaseInfoCo
 				IP:                targetIP,
 				OpenPortCount:     int(hashValue%12) + 1,
 				HighRiskPortCount: int((hashValue / 13) % 4),
+				// 演示模式用国家简写近似表达地理风险（RU/KP 命中高风险），
+				// 真实链路会由攻击面采集器根据 GeoLite2 结果回填该标记。
 				GeoRiskFlag:       strings.EqualFold(baseInfo.Country, "RU") || strings.EqualFold(baseInfo.Country, "KP"),
 				SourceName:        sourceName,
 				RawPayload: map[string]any{
@@ -391,6 +399,8 @@ func (c DemoFlowCollector) Collect(targetIP string, cfg config.SecurityConfig) (
 
 // Normalize 用于规范化当前。
 func (n DefaultFeatureNormalizer) Normalize(targetIP string, collected TaskCollectedData, cfg config.SecurityConfig) (NormalizedFeatureSet, error) {
+	// 归一化这一步把采集到的"原始事实"（国家/ISP/端口/流量指标）折算成四个 0~100 的风险分：
+	// 基础属性、信誉、攻击面、行为。其中信誉分直接来自采集器，其余三个在这里用公式计算。
 	baseInfoRisk := computeWhoisRiskFromCollected(collected.BaseInfo)
 	attackRisk := computeAttackSurfaceRiskFromCollected(collected.AttackSurface)
 	behaviorRisk := computeBehaviorRisk(collected.Flow)
@@ -455,6 +465,8 @@ func (n DefaultFeatureNormalizer) Normalize(targetIP string, collected TaskColle
 
 // Calculate 用于执行Calculate流程。
 func (s WeightedScoreCalculator) Calculate(taskID uint64, targetIP string, normalized NormalizedFeatureSet, cfg config.SecurityConfig) (ScoreResult, error) {
+	// 加权融合：四个维度的贡献值已在 Normalize 阶段按权重算好（Contribution = RawScore × Weight），
+	// 这里直接求和得到核心分 CoreScore，再叠加非线性规则修正得到最终分 FinalScore。
 	baseScore := 0.0
 	reputationScore := 0.0
 	attackSurfaceScore := 0.0
@@ -471,6 +483,8 @@ func (s WeightedScoreCalculator) Calculate(taskID uint64, targetIP string, norma
 			behaviorScore += factor.Contribution
 		}
 	}
+	// 规则修正是在线性加权之外对"组合危险信号"的额外加减分，并限制在 [-5, +15] 区间，
+	// 避免经验规则压过权重模型，保证评分稳定可解释。
 	ruleAdjustmentValue := calculateRuleAdjustmentValue(normalized, cfg)
 	scoreValue := baseScore + reputationScore + attackSurfaceScore + behaviorScore + ruleAdjustmentValue
 
@@ -493,12 +507,14 @@ func (s WeightedScoreCalculator) Calculate(taskID uint64, targetIP string, norma
 			"attackSurface": round2(cfg.Weights.AttackSurfaceWeight),
 			"behavior":      round2(cfg.Weights.BehaviorWeight),
 		},
+		// 预警判定直接复用高风险阈值：最终分达到 highRiskThreshold（默认 75）即触发预警。
 		IsAlertTriggered: scoreValue >= cfg.HighRiskThreshold,
 	}, nil
 }
 
 // Decide 用于执行Decide流程。
 func (d ThresholdAlertDecider) Decide(taskID uint64, taskNo string, targetIP string, score ScoreResult, cfg config.SecurityConfig) (*AlertDecision, error) {
+	// 未触发预警时返回 nil，调用方据此跳过预警记录落库；只有真正达到阈值才生成预警内容。
 	if !score.IsAlertTriggered {
 		return nil, nil
 	}
@@ -514,10 +530,14 @@ func (d ThresholdAlertDecider) Decide(taskID uint64, taskNo string, targetIP str
 
 // computeWhoisRiskFromCollected 用于从基础画像采集结果计算 WHOIS 风险。
 func computeWhoisRiskFromCollected(baseInfo BaseInfoCollectedData) float64 {
+	// 基础属性风险 = 25（基础不确定性：仅凭 IP 归属无法证明安全）
+	//               + 30（命中地理风险国家）
+	//               + 15（ISP 含 "hosting"，云主机/VPS 等托管基础设施更易被滥用）。
 	score := 25.0
 	if isGeoRiskCountry(baseInfo.Country) {
 		score += 30
 	}
+	// 大小写不敏感匹配 "hosting"，避免不同数据源大小写不一致导致漏判。
 	if strings.Contains(strings.ToLower(baseInfo.ISP), "hosting") {
 		score += 15
 	}
@@ -526,10 +546,14 @@ func computeWhoisRiskFromCollected(baseInfo BaseInfoCollectedData) float64 {
 
 // computeAttackSurfaceRiskFromCollected 用于从攻击面采集结果计算攻击面风险。
 func computeAttackSurfaceRiskFromCollected(attack AttackSurfaceCollectedData) float64 {
+	// 攻击面风险 = 开放端口数 × 4 + 高危端口数 × 15 + 地理风险标记 ? 10 : 0。
+	// 高危端口（22/445/3389 等远程管理与横向移动入口）权重远高于普通端口；
+	// 地理风险只做小幅修正，避免地理属性压过真实可达服务。
 	score := float64(attack.OpenPortCount*4 + attack.HighRiskPortCount*15)
 	if attack.GeoRiskFlag {
 		score += 10
 	}
+	// 封顶 100，避免端口爆炸导致分数失真。
 	if score > 100 {
 		return 100
 	}
@@ -538,6 +562,7 @@ func computeAttackSurfaceRiskFromCollected(attack AttackSurfaceCollectedData) fl
 
 // buildScoreReason 用于构建评分Reason。
 func buildScoreReason(normalized NormalizedFeatureSet) string {
+	// 评分说明把四个维度的原始风险分串成一句话，前端直接展示，是评分可解释性的落点。
 	parts := []string{
 		fmt.Sprintf("基础属性风险 %.2f", round2(normalized.WhoisRiskScore)),
 		fmt.Sprintf("信誉风险 %.2f", round2(normalized.ReputationScore)),
@@ -558,6 +583,11 @@ func buildScoreReason(normalized NormalizedFeatureSet) string {
 
 // calculateRuleAdjustmentValue 用于计算RuleAdjustmentValue数值。
 func calculateRuleAdjustmentValue(normalized NormalizedFeatureSet, cfg config.SecurityConfig) float64 {
+	// 规则修正表达的是线性加权表达不出来的"组合危险信号"：
+	//   +6  地理风险标记
+	//   +5  高危端口数 >= 3
+	//   +8  行为风险 >= 70（动态证据强烈指向恶意）
+	//   -2  行为风险 <= 10 且流量禁用（说明缺少动态证据，做小幅减分）。
 	adjustment := 0.0
 	if normalized.GeoRiskFlag {
 		adjustment += 6
@@ -571,6 +601,7 @@ func calculateRuleAdjustmentValue(normalized NormalizedFeatureSet, cfg config.Se
 	if normalized.BehaviorRisk <= 10 && normalizeFlowBoundaryMode(normalized.FlowMode) == "disabled" {
 		adjustment -= 2
 	}
+	// 修正值限制在 [-5, +15]，防止经验规则压过加权分数、破坏评分模型的稳定性。
 	if adjustment > 15 {
 		return 15
 	}
@@ -586,6 +617,7 @@ func buildRuleAdjustmentSummary(normalized NormalizedFeatureSet, adjustment floa
 	if adjustment == 0 {
 		return "weighted-score-with-threshold-mapping;no-extra-adjustment"
 	}
+	// 把命中的修正规则编码成人类可读的标签串并持久化，审计时能还原"为什么加/减了多少分"。
 	parts := []string{"weighted-score-with-threshold-mapping"}
 	if normalized.GeoRiskFlag {
 		parts = append(parts, "geo-risk-flag")
@@ -605,6 +637,8 @@ func buildRuleAdjustmentSummary(normalized NormalizedFeatureSet, adjustment floa
 
 // buildAlgorithmVersion 用于构建AlgorithmVersion。
 func buildAlgorithmVersion(cfg config.SecurityConfig) string {
+	// 算法版本号把当前四个权重一并编码进去，评分记录里存下这串版本，
+	// 即使日后调整权重，历史评分也能还原出"当时用的是哪套权重"，保证可追溯。
 	return fmt.Sprintf(
 		"ahp-entropy-v1|base=%.2f|rep=%.2f|atk=%.2f|beh=%.2f",
 		round2(cfg.Weights.WhoisWeight),
@@ -681,6 +715,7 @@ func firstOctet(targetIP string) int {
 
 // locate 用于执行locate流程。
 func locate(first int) (string, string) {
+	// 演示模式按 IP 首字节粗略映射国家/地区，仅用于本地无外部数据源时的占位画像。
 	switch {
 	case first < 32:
 		return "US", "California"
@@ -726,6 +761,8 @@ func computeBehaviorRisk(flow FlowCollectedData) float64 {
 
 // mapRiskLevel 用于映射风险Level。
 func mapRiskLevel(score float64, runtimeConfig config.SecurityConfig) string {
+	// 等级映射按阈值从高到低依次判断：CRITICAL >= critical(90) >= HIGH >= high(75) >= MEDIUM >= 45 > LOW。
+	// switch 无表达式时按 case 顺序短路判断，所以顺序本身即优先级，不能颠倒。
 	switch {
 	case score >= runtimeConfig.CriticalRiskThreshold:
 		return "CRITICAL"
@@ -740,12 +777,16 @@ func mapRiskLevel(score float64, runtimeConfig config.SecurityConfig) string {
 
 // loadRuntimeSecurityConfig 用于加载配置、缓存或外部资源。
 func loadRuntimeSecurityConfig() config.SecurityConfig {
+	// 运行时配置以静态 config.yaml 为底，再用数据库里保存的最新安全配置覆盖，
+	// 这样安全配置页改阈值/权重/数据源开关后无需重启服务即可生效。
 	current := global.AppConfig.Security
+	// DB 未初始化（例如启动早期或测试环境）时直接退回静态配置，保证任务链路可跑。
 	if global.DB == nil {
 		return current
 	}
 
 	var dbConfig securityModel.SecurityConfig
+	// 取 id 最小的那条作为运行时配置；查不到（首次未配置）时也退回静态配置。
 	if err := global.DB.Order("id ASC").First(&dbConfig).Error; err != nil {
 		return current
 	}
@@ -772,11 +813,15 @@ func loadRuntimeSecurityConfig() config.SecurityConfig {
 
 // round2 用于执行round2流程。
 func round2(value float64) float64 {
+	// 先放大 100 倍、加 0.5 再截断，实现"四舍五入保留两位小数"；
+	// 全部评分与贡献值都经过这一步，保证展示与落库的小数位数一致。
 	return float64(int(value*100+0.5)) / 100
 }
 
 // buildCollectorConfigVersion 用于构建Collector配置Version。
 func buildCollectorConfigVersion(cfg config.SecurityConfig) string {
+	// 配置版本串会参与采集结果缓存 key 的构成：任何数据源开关/参数/文件版本变化都会改变这串，
+	// 从而让旧缓存自动失效，避免"改了配置却拿到旧采集结果"。
 	return fmt.Sprintf(
 		"whois=%s|reputation=%s|notify=%s|high=%.2f|critical=%.2f|wh=%.2f|rep=%.2f|atk=%.2f|beh=%.2f|geo=%t:%s:%s:%s:%s:%s:%s:%d|rdap=%t:%s:%s:%d:%d|blacklist=%t:%s:%s:%d:%.2f:%.2f|abuse=%t:%s:%t:%d:%d:%d|attackSurface=%t:%v:%d:%d:%d:%t:%s:%d|flow=%t:%s:%s:%s:%s:%d:%d:%d",
 		resolveWhoisEndpointContractKey(cfg),
@@ -1037,6 +1082,8 @@ func validateFlowCollectedData(result FlowCollectedData) error {
 
 // classifyCollectorError 用于执行classifyCollectorError流程。
 func classifyCollectorError(stepName, sourceName, targetIP string, err error) error {
+	// 错误分类：优先用 errors.Is 精确匹配超时，其余按错误文本关键词归类。
+	// 关键词匹配是兜底手段——外部库未必规范地包装错误类型，只能靠文案特征判断。
 	kind := CollectorErrorInternal
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -1079,6 +1126,8 @@ func runCollectorStep[T any](
 		cacheTTL = utils.CollectorCacheTTL()
 	}
 
+	// 缓存 key = 目标 IP + 来源名 + 配置版本，三者任一变化都会命中不同的 key。
+	// 读缓存失败不中断，降级为实时采集，保证主链路可用性优先于性能。
 	cacheKey := utils.BuildCollectorCacheKey(targetIP, sourceName, configVersion)
 	var cached T
 	if hit, err := utils.CacheGetJSON(cacheKey, &cached); err == nil && hit {
@@ -1093,6 +1142,8 @@ func runCollectorStep[T any](
 		err   error
 	}
 
+	// 用带缓冲(1)的 channel + goroutine 实现超时控制：采集协程无论如何都能写入结果，
+	// 不会因为调用方超时返回而把 goroutine 阻塞在发送上造成泄漏。
 	resultCh := make(chan collectorResult[T], 1)
 	go func() {
 		value, err := execute()
@@ -1109,6 +1160,7 @@ func runCollectorStep[T any](
 				return zero, classifyCollectorError(stepName, sourceName, targetIP, err)
 			}
 		}
+		// 只有"非降级"的成功结果才写缓存：失败/降级结果不缓存，避免把不可信数据当成长期缓存复用。
 		if shouldCacheCollectorValue(result.value) {
 			if err := utils.CacheSetJSON(cacheKey, result.value, cacheTTL); err != nil {
 				log.Printf("采集步骤缓存写入失败，已返回实时采集结果，step=%s source=%s key=%s err=%v", stepName, sourceName, cacheKey, err)
@@ -1118,6 +1170,7 @@ func runCollectorStep[T any](
 		}
 		return result.value, nil
 	case <-time.After(timeout):
+		// 超时统一归类为 TIMEOUT，走 CollectorError 的错误分类，便于上层按类别处理。
 		return zero, classifyCollectorError(stepName, sourceName, targetIP, context.DeadlineExceeded)
 	}
 }
@@ -1226,6 +1279,8 @@ func isEffectiveSourceName(source string) bool {
 	if trimmed == "" {
 		return false
 	}
+	// 过滤掉 disabled/degraded/neutral 等"未真正生效"的来源标记，
+	// 保证来源链里只保留真正参与了采集的数据源，避免总览统计虚高。
 	lower := strings.ToLower(trimmed)
 	switch {
 	case lower == "flow-disabled":
@@ -1484,6 +1539,8 @@ func extractFlowWindowRows(collected FlowCollectedData) []flowWindowAggregateDra
 
 // buildFallbackFlowWindowRows 用于构建Fallback流量WindowRows。
 func buildFallbackFlowWindowRows(cfg config.SecurityConfig, collected FlowCollectedData) []flowWindowAggregateDraft {
+	// 当解析器没有给出分窗明细（windows 为空）但又有整体指标时，
+	// 用整体指标合成一条单窗口记录，保证流量趋势/证据时间线仍有内容可展示。
 	metrics := resolveFlowParsedMetrics(collected)
 	packetCount := readFlowMetricUint64(metrics, "packetCount")
 	byteCount := readFlowMetricUint64(metrics, "byteCount")
@@ -1615,6 +1672,8 @@ func countHighRiskPortHits(items []flowTopPortItem) uint32 {
 	if len(items) == 0 {
 		return 0
 	}
+	// 高危端口集合：SSH/RDP/SMB 等远程管理入口 + 常见代理端口 8080 + DNS 53，
+	// 与攻击面维度的高危端口口径保持一致，用于回退窗口里统计高危端口命中数。
 	highRiskPorts := map[string]struct{}{
 		"tcp:22":   {},
 		"tcp:445":  {},
@@ -1721,6 +1780,8 @@ func resolveFlowPcapFilePath(cfg config.SecurityConfig, flow FlowCollectedData) 
 
 // resolveFlowCollectionErrorMessage 用于解析流量CollectionErrorMessage。
 func resolveFlowCollectionErrorMessage(flow FlowCollectedData) string {
+	// 只有失败类状态才提取错误信息；成功/降级/解析完成等状态一律返回空，
+	// 避免任务详情页把正常的降级提示误当成错误展示。
 	status := strings.ToUpper(strings.TrimSpace(flow.Status))
 	if strings.Contains(status, "ERROR") || strings.Contains(status, "FAILED") {
 		return strings.TrimSpace(flow.Summary)
@@ -1962,6 +2023,8 @@ func toAlertRecordModel(taskID uint64, targetIP string, scoreID uint64, decision
 	if decision == nil || !decision.ShouldAlert {
 		return nil
 	}
+	// 预警发送在评分落库前同步执行：拿到发送状态后一并写入预警记录，
+	// 这样任务详情能直接展示"已发送/失败"，无需再异步查询发送结果。
 	cfg := loadRuntimeSecurityConfig()
 	sendStatus, sendTime, err := sendAlertByConfiguredChannel(decision, cfg)
 	now := time.Now()

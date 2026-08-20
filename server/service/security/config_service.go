@@ -50,11 +50,13 @@ var (
 )
 
 // GetSecurityConfig 用于查询配置详情并组装响应。
+// 三级读取策略：先读缓存 → 未命中再读数据库 → 都无则返回默认配置；读到结果后回填缓存
 func (s *ConfigService) GetSecurityConfig() (responseModel.ConfigResponse, error) {
 	var cached responseModel.ConfigResponse
 	if hit, err := utils.CacheGetJSON(utils.SecurityConfigCacheKey, &cached); err == nil && hit {
 		return cached, nil
 	} else if err != nil {
+		// 缓存异常不阻断主流程，降级回源数据库即可
 		log.Printf("安全配置缓存读取失败，继续读取数据库，key=%s err=%v", utils.SecurityConfigCacheKey, err)
 	}
 
@@ -64,6 +66,7 @@ func (s *ConfigService) GetSecurityConfig() (responseModel.ConfigResponse, error
 	}
 
 	if config == nil {
+		// 数据库还没有配置记录时，按启动配置生成默认值返回，并尝试写入缓存
 		resp := buildDefaultSecurityConfigResponse()
 		if err := utils.CacheSetJSON(utils.SecurityConfigCacheKey, resp, utils.SecurityConfigCacheTTL()); err != nil {
 			log.Printf("默认安全配置缓存写入失败，已返回默认配置，key=%s err=%v", utils.SecurityConfigCacheKey, err)
@@ -125,6 +128,8 @@ func (s *ConfigService) UpdateSecurityConfig(req requestModel.UpdateConfigReques
 		return responseModel.ConfigResponse{}, WrapServiceError(ServiceErrorCategoryInternal, "更新安全配置失败，请稍后重试", err)
 	}
 
+	// 关键点：保存到数据库后立即同步内存里的运行时配置（global.AppConfig），
+	// 使“运行时配置”覆盖“启动配置”，后续评分/采集链路无需重启即生效
 	global.AppConfig.Security.Source.WhoisEndpoint = config.WhoisEndpoint
 	global.AppConfig.Security.Source.ReputationEndpoint = config.ReputationEndpoint
 	global.AppConfig.Security.Source.AttackSurfaceEndpoint = config.AttackSurfaceEndpoint
@@ -153,6 +158,7 @@ func (s *ConfigService) UpdateSecurityConfig(req requestModel.UpdateConfigReques
 	applyPersistedFeatureSourceSelectionV2(&global.AppConfig.Security)
 
 	resp := mapSecurityConfigToResponse(*config)
+	// 先删除旧缓存再写新缓存，保证配置变更后缓存与数据库一致；同时清掉总览缓存
 	_ = utils.CacheDelete(utils.SecurityConfigCacheKey, utils.SecurityDashboardSummaryCacheKey)
 	if err := utils.CacheSetJSON(utils.SecurityConfigCacheKey, resp, utils.SecurityConfigCacheTTL()); err != nil {
 		log.Printf("更新后的安全配置缓存写入失败，后续请求将回源数据库，key=%s err=%v", utils.SecurityConfigCacheKey, err)
@@ -201,6 +207,7 @@ func (s *ConfigService) UpdateFlowToggle(req requestModel.UpdateFlowToggleReques
 		return responseModel.ConfigResponse{}, WrapServiceError(ServiceErrorCategoryInternal, "更新流量开关失败，请稍后重试", err)
 	}
 
+	// 与全量更新一致：落库后同步内存运行时配置，让流量开关即时生效
 	global.AppConfig.Security.Source.Flow.Enabled = config.FlowEnabled
 	global.AppConfig.Security.Source.Flow.Mode = config.FlowMode
 	global.AppConfig.Security.Source.Flow.InterfaceName = config.FlowInterfaceName
@@ -231,6 +238,7 @@ func (s *ConfigService) UpdateFlowToggle(req requestModel.UpdateFlowToggleReques
 }
 
 // ListFlowInterfaces 用于查询配置列表并组装响应。
+// 枚举本机可抓包网卡，供实时监控/在线抓包页选择；带 5 秒超时防止底层枚举卡死
 func (s *ConfigService) ListFlowInterfaces() ([]responseModel.FlowInterfaceOption, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -239,6 +247,7 @@ func (s *ConfigService) ListFlowInterfaces() ([]responseModel.FlowInterfaceOptio
 	if err != nil {
 		return nil, WrapServiceError(ServiceErrorCategoryInternal, "获取在线抓包网卡列表失败，请稍后重试", err)
 	}
+	// 按网卡索引排序（索引为 0 的排最后），让用户看到稳定有序的列表
 	sort.Slice(interfaces, func(i, j int) bool {
 		if interfaces[i].IfIndex == interfaces[j].IfIndex {
 			return interfaces[i].Name < interfaces[j].Name
@@ -441,6 +450,7 @@ func validateConfigRequest(req requestModel.UpdateConfigRequest) error {
 }
 
 // validateWeightSum 用于校验输入参数和业务约束。
+// 四维权重之和必须严格等于 1.0000；用基点（×10000 取整）比较，规避浮点累加误差导致的误判
 func validateWeightSum(weights requestModel.ConfigWeightRequest) error {
 	total := weightToBasisPoint(weights.WhoisWeight) +
 		weightToBasisPoint(weights.ReputationWeight) +
@@ -453,6 +463,7 @@ func validateWeightSum(weights requestModel.ConfigWeightRequest) error {
 }
 
 // weightToBasisPoint 用于执行weightToBasisPoint流程。
+// 把权重（0~1）转成万分位整数（基点），避免直接比较 float 时因精度导致 0.2+0.35+0.3+0.15 != 1.0
 func weightToBasisPoint(value float64) int {
 	return int(math.Round(value * 10000))
 }

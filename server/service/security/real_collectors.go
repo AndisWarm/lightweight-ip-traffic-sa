@@ -17,6 +17,8 @@ type RealAttackSurfaceCollector struct{}
 
 // Collect 用于执行Collect流程。
 func (c RealBaseInfoCollector) Collect(taskID uint64, targetIP string, cfg config.SecurityConfig) (BaseInfoCollectedData, error) {
+	// 真实采集器统一走"解析具体 provider → 带超时/缓存/校验的通用步骤"，
+	// provider 由配置决定（如 GeoLite2+RDAP、本地黑名单、有限端口探测）。
 	provider := resolveBaseInfoSourceProvider(cfg)
 	configVersion := buildCollectorConfigVersion(cfg)
 	return runExternalCollectorStep(

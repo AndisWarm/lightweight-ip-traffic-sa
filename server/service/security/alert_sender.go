@@ -17,6 +17,8 @@ func sendAlertByConfiguredChannel(decision *AlertDecision, cfg config.SecurityCo
 	}
 
 	channel := strings.ToUpper(strings.TrimSpace(decision.Channel))
+	// 默认 SYSTEM 通道不接第三方通知服务，只记审计日志并返回发送成功，
+	// 保证预警链路不因外部通知服务缺失而失败。
 	if channel == "" || channel == "SYSTEM" {
 		now := time.Now()
 		recordSecurityAuditLog(AuditLogEntry{
@@ -53,6 +55,8 @@ func sendAlertMail(decision *AlertDecision, cfg config.SecurityConfig) (string, 
 	mailCfg := cfg.Alert.Mail
 	to := strings.TrimSpace(mailCfg.Recipient)
 
+	// 邮件未启用/配置不完整都返回明确的 FAILED/SKIPPED 状态并记审计，
+	// 上层据此把预警记录标记为发送失败，而不是静默丢失。
 	if !mailCfg.Enabled {
 		recordAlertMailAudit(to, decision.Title, "SKIPPED", "邮件预警未启用")
 		return "SKIPPED", nil, fmt.Errorf("mail alert disabled")
@@ -67,6 +71,8 @@ func sendAlertMail(decision *AlertDecision, cfg config.SecurityConfig) (string, 
 
 	message := []byte(fmt.Sprintf("To: %s\r\nSubject: %s\r\n\r\n%s", to, decision.Title, decision.Content))
 	if mailCfg.UseTLS {
+		// InsecureSkipVerify 跳过证书校验，适配内网/自签名 SMTP 环境；
+		// 生产环境若对外网 SMTP 应关闭该选项以避免中间人风险。
 		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: mailCfg.SMTPHost, InsecureSkipVerify: true})
 		if err != nil {
 			recordAlertMailAudit(to, decision.Title, "FAILED", err.Error())

@@ -105,6 +105,7 @@ type FlowParser interface {
 }
 
 // buildEnhancedScoreFactors 用于构建Enhanced评分Factors。
+// 在四维评分因子基础上，只对 behavior 因子补充“流量证据依据”，其余因子保持原样
 func buildEnhancedScoreFactors(collected TaskCollectedData, cfg config.SecurityConfig, baseInfoRisk float64, attackRisk float64, behaviorRisk float64) []securityScoreFactor {
 	factors := buildScoreFactors(collected, cfg, baseInfoRisk, attackRisk, behaviorRisk)
 	for index := range factors {
@@ -113,6 +114,7 @@ func buildEnhancedScoreFactors(collected TaskCollectedData, cfg config.SecurityC
 		}
 		switch {
 		case hasFlowRealMetrics(collected.Flow):
+			// 有真实流量指标时，把报文数/会话数/DNS/HTTP/TLS 等摘要作为评分依据展示
 			factors[index].Basis = buildFlowBehaviorBasis(collected, behaviorRisk)
 		case isFlowPrototypeVisible(collected.Flow):
 			factors[index].Basis = fmt.Sprintf("mode=%s, status=%s, summary=%s", collected.Flow.Mode, collected.Flow.Status, collected.Flow.Summary)
@@ -294,6 +296,7 @@ func buildFlowParseRequest(targetIP string, cfg config.SecurityConfig) FlowParse
 }
 
 // resolveFlowParseMode 用于解析流量ParseMode。
+// 将配置里的字符串模式归一化为内部 FlowParseMode 枚举；关闭时直接 disabled，非法模式回退到 sample
 func resolveFlowParseMode(cfg config.SecurityConfig) FlowParseMode {
 	if !cfg.Source.Flow.Enabled {
 		return FlowParseModeDisabled
@@ -405,6 +408,8 @@ func compactFlowMap(input map[string]any) map[string]any {
 }
 
 // sanitizeFlowParsedMetrics 用于清理流量ParsedMetrics展示数据。
+// 解析指标只在“解析器就绪 + 状态为已解析/无目标流量”时才对外暴露，
+// 避免把失败态或原型态的中间字段当成可信统计结果消费
 func sanitizeFlowParsedMetrics(mode FlowParseMode, status string, parserReady bool, parsedMetrics map[string]any) map[string]any {
 	parsedMetrics = compactFlowMap(parsedMetrics)
 	if len(parsedMetrics) == 0 {
@@ -572,6 +577,7 @@ func buildFlowParseResultPayload(result FlowParseResult) map[string]any {
 }
 
 // mapFlowParseResultToCollectedData 用于把流量解析结果转换为采集结果。
+// 统一把解析器输出映射为 FlowCollectedData，供评分因子、证据链、任务详情等处消费
 func mapFlowParseResultToCollectedData(targetIP string, result FlowParseResult) FlowCollectedData {
 	result = finalizeFlowParseResult(result)
 	return FlowCollectedData{

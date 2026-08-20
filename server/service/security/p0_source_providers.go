@@ -173,6 +173,8 @@ func (p realBaseInfoSourceProvider) CollectBaseInfo(ctx context.Context, targetI
 	evidenceItems := make([]securityEvidenceItem, 0, 2)
 	degradeReasons := make([]string, 0, 2)
 
+	// 基础画像采用"离线优先、在线补充"策略：先用本地 GeoLite2 拿地理/ASN 画像（不依赖网络、可重复演示），
+	// 再用 RDAP 补充注册组织与网段信息；两个源各自失败都不阻断任务，只把原因记进 degradeReasons 做降级。
 	if cfg.Source.GeoLite2.Enabled {
 		geoResult, evidence, err := collectGeoLite2Data(ctx, targetIP, cfg)
 		if err != nil {
@@ -232,6 +234,8 @@ func (p realReputationSourceProvider) Name() string {
 
 // CollectReputation 用于采集目标 IP 的信誉风险信息。
 func (p realReputationSourceProvider) CollectReputation(ctx context.Context, targetIP string, cfg config.SecurityConfig) (ReputationCollectedData, error) {
+	// defaultScore 是未命中黑名单时的中性分：既不为 0（避免彻底忽略信誉维度），也不虚高，作为未命中目标的兜底。
+	// 配置越界（<=0 或 >100）时强制回到 20，防止错误配置直接污染信誉评分。
 	defaultScore := cfg.Source.LocalBlacklist.DefaultScore
 	if defaultScore <= 0 || defaultScore > 100 {
 		defaultScore = 20
@@ -302,6 +306,8 @@ func (p realReputationSourceProvider) CollectReputation(ctx context.Context, tar
 		return result, nil
 	}
 
+	// 命中条目优先用条目自带分数（支持逐条精细控制）；条目未配分或越界时回退到配置 matchScore，再兜底到 92。
+	// 命中即是最强信誉证据，直接采用条目分，解释力最强。
 	matchScore := entry.Score
 	if matchScore <= 0 || matchScore > 100 {
 		matchScore = cfg.Source.LocalBlacklist.MatchScore
@@ -469,6 +475,8 @@ func queryGeoLite2(targetIP string, cfg config.GeoLite2SourceConfig) (geoLite2Lo
 	result := geoLite2LookupResult{}
 	found := false
 
+	// GeoLite2 是本地 mmdb 离线库，查询走内存映射文件、微秒级返回且不依赖公网，因此作为基础画像的稳定首选。
+	// 优先查信息更全的 City 库，缺国家字段时再回退到更小的 Country 库。
 	var cityRecord geoLite2CityRecord
 	if err := geoLite2Readers.lookup(cfg.CityDBPath, "city", parsed, &cityRecord); err == nil {
 		result.Country = pickLocalizedName(cityRecord.Country.Names, cityRecord.Country.ISOCode)
@@ -484,6 +492,7 @@ func queryGeoLite2(targetIP string, cfg config.GeoLite2SourceConfig) (geoLite2Lo
 		found = found || result.AccuracyRadius > 0 || result.Latitude != 0 || result.Longitude != 0 || result.TimeZone != ""
 	}
 
+	// City 库可能缺失或未解析出国家码，此时回退到更小的 Country 库补国家信息，避免画像缺位。
 	if result.Country == "" {
 		var countryRecord geoLite2CountryRecord
 		if err := geoLite2Readers.lookup(cfg.CountryDBPath, "country", parsed, &countryRecord); err == nil {
@@ -560,6 +569,8 @@ func (s *geoLite2ReaderState) ensureReaderLocked(entry *geoLite2ReaderEntry, res
 		return err
 	}
 
+	// 版本令牌 = 文件大小 + 修改时间：文件内容或版本变化后令牌不一致，会自动关闭旧 reader 并重新打开实现热重载，
+	// 避免长期运行后仍使用过期的 mmdb 数据。
 	action := "加载"
 	if entry.reader != nil {
 		action = "热重载"
@@ -579,6 +590,8 @@ func queryRDAPWithFallback(ctx context.Context, targetIP string, timeout time.Du
 	endpoints := buildRDAPEndpoints(cfg)
 	errorsSeen := make([]string, 0, len(endpoints))
 
+	// 主端点失败后按顺序轮询备用端点（默认 ARIN/RIPE/APNIC/AFRINIC/LACNIC），任一成功即返回；
+	// 每个端点独立设置超时并记录失败原因，避免单个注册局挂起拖死整个基础画像采集。
 	for _, endpoint := range endpoints {
 		if err := ctx.Err(); err != nil {
 			errorsSeen = append(errorsSeen, fmt.Sprintf("parent_context=%v", err))
@@ -598,6 +611,8 @@ func queryRDAPWithFallback(ctx context.Context, targetIP string, timeout time.Du
 
 // buildRDAPEndpoints 用于构建RDAPEndpoints。
 func buildRDAPEndpoints(cfg config.RDAPSourceConfig) []string {
+	// 主端点在前、备用端点在后：rdap.org 会按 IP 归属自动跳转到正确注册局，备用端点兜底覆盖各区域注册局；
+	// 去重后保证同一端点不会被重复轮询。
 	items := make([]string, 0, 1+len(cfg.BackupBaseURLs))
 	if base := normalizeRDAPEndpoint(cfg.BaseURL); base != "" {
 		items = append(items, base)

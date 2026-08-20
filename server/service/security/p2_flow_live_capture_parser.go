@@ -70,11 +70,15 @@ func (p realOnlineCaptureFlowParser) Parse(ctx context.Context, req FlowParseReq
 		), nil
 	}
 
+	// 在线抓包强依赖 Npcap 驱动 + 可授权网卡 + 管理员权限：缺少任一条件都会在下面失败，
+	// 失败时按"权限缺失"或"网卡不可用"分类记录错误模型，不阻断主链路。
 	metrics, debugPayload, err := captureOnlineTrafficWithPcap(ctx, req, selection, adapterInfo)
 	if err != nil {
 		status := FlowStatusParseFailed
 		errorModel := newFlowParseErrorModel(FlowErrorCodeCaptureInterfaceNotReady, FlowErrorCategoryRuntime, "在线抓包启动失败，请检查 Npcap、网卡状态和管理员权限。", true)
 		lowerErr := strings.ToLower(err.Error())
+		// 错误信息含 permission/denied/access 时归类为权限问题，提示用管理员权限运行并确认 Npcap 可用，
+		// 与"网卡不存在"区分开，便于用户对症修复。
 		if strings.Contains(lowerErr, "permission") || strings.Contains(lowerErr, "denied") || strings.Contains(lowerErr, "access") {
 			status = FlowStatusWaitingPermission
 			errorModel = newFlowParseErrorModel(FlowErrorCodeCapturePermissionNeeded, FlowErrorCategoryPermission, "在线抓包受限，请以管理员权限运行并确认 Npcap 可用。", true)
@@ -149,6 +153,8 @@ func captureOnlineTrafficWithPcap(
 	}
 	defer inactive.CleanUp()
 
+	// 用 InactiveHandle 先配置抓包参数再 Activate：快照长度 65535（抓完整帧）、混杂模式（捕获非本机目的 MAC 的包）、
+	// 读超时 500ms（让 ReadPacketData 周期返回，便于及时响应 ctx 取消）、立即模式（收到即返回，降低延迟）。
 	_ = inactive.SetSnapLen(65535)
 	_ = inactive.SetPromisc(true)
 	_ = inactive.SetTimeout(500 * time.Millisecond)
@@ -160,6 +166,8 @@ func captureOnlineTrafficWithPcap(
 	}
 	defer handle.Close()
 
+	// BPF 过滤器在内核层过滤，只保留源或目的为目标 IP 的报文：网卡上无关流量远多于目标流量，
+	// 先过滤再解析能大幅减少用户态拷贝与解析开销，也避免抓包缓冲被无关包占满导致丢包。
 	if strings.TrimSpace(req.TargetIP) != "" {
 		if err := handle.SetBPFFilter(fmt.Sprintf("host %s", req.TargetIP)); err != nil {
 			return flowParseMetrics{}, debugPayload, fmt.Errorf("set pcap bpf filter failed: %w", err)
@@ -245,6 +253,8 @@ func resolveLiveCaptureDeviceSelection(ctx context.Context, ifaceName string) (l
 		ifIndex = adapterInfo.IfIndex
 	}
 
+	// pcap 暴露的设备名是 \Device\NPF_{GUID} 形式，与 Windows 网卡名不一致；
+	// 因此按"名称相等、描述相等、GUID 包含、描述包含"等维度加权打分，选最高分设备作为实际抓包句柄。
 	bestScore := -1
 	best := liveCaptureDeviceSelection{}
 	for _, device := range devices {
@@ -297,6 +307,8 @@ func resolveLiveCaptureDeviceSelection(ctx context.Context, ifaceName string) (l
 
 // lookupWindowsNetAdapter 用于执行lookupWindowsNetAdapter流程。
 func lookupWindowsNetAdapter(ctx context.Context, ifaceName string) (*windowsNetAdapterInfo, error) {
+	// 通过 PowerShell Get-NetAdapter 取 Windows 侧网卡元数据（GUID、ifIndex、状态），用于与 pcap 设备做 GUID 对齐；
+	// 单引号转义防止网卡名里的引号注入命令。
 	command := exec.CommandContext(
 		ctx,
 		"powershell",

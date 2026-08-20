@@ -24,6 +24,8 @@ type portScanResult struct {
 	err     error
 }
 
+// 高危端口集合：22(SSH)、445(SMB，勒索病毒常用横向移动通道)、3389(RDP 远程桌面)。
+// 这些端口一旦对外开放，远程管理与横向移动风险显著高于普通 Web 端口，因此在攻击面评分里单独计数加权。
 var highRiskPorts = map[int]struct{}{
 	22:   {},
 	445:  {},
@@ -37,6 +39,8 @@ func (p limitedPortScanProvider) Name() string {
 
 // CollectAttackSurface 用于采集目标 IP 的攻击面信息。
 func (p limitedPortScanProvider) CollectAttackSurface(ctx context.Context, targetIP string, baseInfo BaseInfoCollectedData, cfg config.SecurityConfig) (AttackSurfaceCollectedData, error) {
+	// 只对配置里固定的少量端口做探测，刻意避免把全端口重型扫描做成主链路硬依赖：
+	// 全端口扫描慢、重、易被目标防火墙识别并封禁，这里用轻量探测满足本地演示与答辩场景。
 	ports := normalizeAttackSurfacePorts(cfg.Source.AttackSurface.Ports)
 	perDialTimeout := resolveAttackSurfaceDialTimeout(cfg)
 	maxConcurrency := resolveAttackSurfaceConcurrency(cfg)
@@ -167,6 +171,8 @@ func scanTargetPorts(ctx context.Context, targetIP string, ports []int, timeout 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// 带缓冲的 channel 充当信号量，把并发拨号数限制在 maxConcurrency（默认 3）：
+			// 既避免对目标造成扫描冲击，也防止本地瞬间打开过多连接耗尽资源。
 			select {
 			case semaphore <- struct{}{}:
 			case <-ctx.Done():
@@ -175,6 +181,7 @@ func scanTargetPorts(ctx context.Context, targetIP string, ports []int, timeout 
 			}
 			defer func() { <-semaphore }()
 
+			// 单端口短超时（默认 800ms）：目标无响应时快速判定，保证整轮探测在可控时间内结束。
 			dialer := net.Dialer{Timeout: timeout}
 			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetIP, strconv.Itoa(port)))
 			if err == nil {
@@ -188,6 +195,8 @@ func scanTargetPorts(ctx context.Context, targetIP string, ports []int, timeout 
 			}
 
 			lower := strings.ToLower(err.Error())
+			// "connection refused" 表示端口确定关闭（对端明确拒绝），按未开放处理；与超时区分开——
+			// 超时更可能意味着"网络不可达或被防火墙过滤"，语义不同，需单独标记以便后续降级说明。
 			if isClosedPortError(lower) {
 				resultCh <- portScanResult{port: port}
 				return

@@ -30,6 +30,7 @@ func (s *DashboardService) GetGeoRisk() (responseModel.DashboardGeoRiskResponse,
 		AlertCount int64
 	}
 
+	// 关联任务/基础画像/评分/预警四表，聚合每个 IP 的任务数与预警数，并取 GeoLite2 经纬度供热力图展示
 	var rows []geoRiskRow
 	start := time.Now().AddDate(0, 0, -7)
 	err := global.DB.Table("sec_ip_task AS t").
@@ -70,6 +71,8 @@ func (s *DashboardService) GetGeoRisk() (responseModel.DashboardGeoRiskResponse,
 }
 
 // GetSummary 用于查询总览详情并组装响应。
+// 总览聚合：一次请求汇总任务数、风险分布、7 天趋势、预警数、来源覆盖与流量趋势，
+// 结果用短 TTL 缓存，任务创建成功或预警产生时主动清缓存以保证首页尽快反映最新态势
 func (s *DashboardService) GetSummary() (responseModel.DashboardSummaryResponse, error) {
 	runtimeCfg := loadRuntimeSecurityConfig()
 	var cached responseModel.DashboardSummaryResponse
@@ -82,6 +85,7 @@ func (s *DashboardService) GetSummary() (responseModel.DashboardSummaryResponse,
 	repo := repository.RepositoryGroupApp.SecurityRepositoryGroup
 	now := time.Now()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	// 趋势回溯起点：往前推 6 天，加上今天共 7 个自然日
 	trendStart := dayStart.AddDate(0, 0, -6)
 
 	taskSummary, err := repo.TaskRepository.CountSummary(global.DB, dayStart)
@@ -193,6 +197,7 @@ func (s *DashboardService) GetSummary() (responseModel.DashboardSummaryResponse,
 }
 
 // buildDashboardTrend 用于构建总览Trend。
+// 把任务/预警按日期落到 map，再按 7 天补齐缺失日期（无数据的日期补 0），保证前端折线连续
 func buildDashboardTrend(start time.Time, taskRows []repositorySecurity.DailyCountRow, alertRows []repositorySecurity.AlertDailyCountRow) []responseModel.DashboardTrendItem {
 	taskMap := make(map[string]int64, len(taskRows))
 	for _, row := range taskRows {
@@ -217,6 +222,7 @@ func buildDashboardTrend(start time.Time, taskRows []repositorySecurity.DailyCou
 }
 
 // buildDashboardRiskTrend 用于构建总览风险Trend。
+// 与任务趋势同理，按 7 天补齐高风险/严重任务数，缺失日期补 0
 func buildDashboardRiskTrend(start time.Time, rows []repositorySecurity.RiskTrendCountRow) []responseModel.DashboardRiskTrendItem {
 	riskMap := make(map[string]repositorySecurity.RiskTrendCountRow, len(rows))
 	for _, row := range rows {
@@ -237,6 +243,7 @@ func buildDashboardRiskTrend(start time.Time, rows []repositorySecurity.RiskTren
 }
 
 // buildRiskDistribution 用于构建风险Distribution。
+// 按固定的 LOW/MEDIUM/HIGH/CRITICAL 顺序输出，缺失等级补 0，保证前端饼图顺序稳定
 func buildRiskDistribution(rows []repositorySecurity.RiskLevelCountRow) []responseModel.DashboardRiskDistributionItem {
 	order := []string{"LOW", "MEDIUM", "HIGH", "CRITICAL"}
 	countMap := make(map[string]int64, len(rows))
@@ -289,6 +296,7 @@ func toResponseFlowModeDistribution(rows []repositorySecurity.FlowModeCountRow) 
 }
 
 // buildDashboardFlowTrend 用于构建总览流量Trend。
+// 合并流量三表（采集/窗口聚合/特征快照）的按日统计，报文/字节/会话优先取窗口聚合值、缺失时回退采集值
 func buildDashboardFlowTrend(
 	start time.Time,
 	collectionRows []repositorySecurity.FlowCollectionTrendRow,
@@ -314,6 +322,7 @@ func buildDashboardFlowTrend(
 		collectionRow := collectionMap[current]
 		windowRow := windowMap[current]
 		behaviorRow := behaviorMap[current]
+		// 用两个布尔标记区分“有窗口聚合数据”与“有特征快照数据”，前端据此决定是否展示对应图表
 		hasWindowMetrics := windowRow.PacketCount > 0 || windowRow.ByteCount > 0 || windowRow.ConversationCount > 0
 		hasBehaviorSnapshot := behaviorRow.HighBehaviorRiskCount > 0 ||
 			behaviorRow.TrackedConversationSum > 0 ||
@@ -362,6 +371,7 @@ func sumFlowCollectionCount(rows []repositorySecurity.FlowModeCountRow) int64 {
 }
 
 // buildFlowCapabilitySummary 用于构建流量Capability摘要。
+// 根据流量开关与活动模式生成一句给前端展示的能力说明，明确“流量维不进入默认来源覆盖”的边界
 func buildFlowCapabilitySummary(cfg config.SecurityConfig, rows []repositorySecurity.FlowModeCountRow) string {
 	mode := resolveDashboardActiveFlowMode(cfg)
 	if !cfg.Source.Flow.Enabled {

@@ -5,6 +5,8 @@ import "errors"
 // ServiceErrorCategory 用于限定ServiceErrorCategory分类取值。
 type ServiceErrorCategory string
 
+// 错误类别直接映射到对外响应的语义（参数错/未认证/无权限/冲突/不存在/外部依赖/内部错误），
+// 上层根据类别决定 HTTP 状态码和是否重试，而不是靠错误字符串做判断。
 const (
 	ServiceErrorCategoryInvalidArgument    ServiceErrorCategory = "invalid_argument"
 	ServiceErrorCategoryUnauthenticated    ServiceErrorCategory = "unauthenticated"
@@ -67,6 +69,8 @@ func ResolveServiceErrorCategory(err error) ServiceErrorCategory {
 		return ""
 	}
 
+	// 优先 errors.As 沿 Unwrap 链找回 ServiceError 的类别；找不到再按哨兵错误兜底，
+	// 最后归类为内部错误。这样即使错误被 fmt.Errorf("%w") 多层包装也能正确分类。
 	var serviceErr *ServiceError
 	if errors.As(err, &serviceErr) {
 		return serviceErr.Category
@@ -83,6 +87,8 @@ func ResolveServiceErrorMessage(err error, fallback string) string {
 		return fallback
 	}
 
+	// 优先暴露面向用户的友好 Message（避免把内部实现细节/底层错误直接抛给前端），
+	// 拿不到友好消息时退回 fallback，最后才用原始错误文本兜底。
 	var serviceErr *ServiceError
 	if errors.As(err, &serviceErr) && serviceErr.Message != "" {
 		return serviceErr.Message

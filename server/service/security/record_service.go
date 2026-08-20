@@ -27,6 +27,8 @@ func (s *RecordService) ListRecords(query requestModel.RecordListQuery, claims *
 	repo := repository.RepositoryGroupApp.SecurityRepositoryGroup.RecordRepository
 	items := make([]responseModel.RecordListItem, 0)
 
+	// 历史页不是单表直出：按事件类型分别查"任务记录"和"预警记录"，合并后统一分页，
+	// 让用户能按时间线看到"检测发生了什么、是否触发预警"。
 	if query.EventType == "" || query.EventType == "ALL" || query.EventType == "TASK" {
 		taskRows, err := repo.ListTaskRecords(global.DB, query.Keyword, query.CreatedBy)
 		if err != nil {
@@ -128,6 +130,8 @@ func (s *RecordService) ListRecords(query requestModel.RecordListQuery, claims *
 		}
 	}
 
+	// 合并后的记录按时间倒序排列，再做内存分页切片；start/end 先夹紧到 [0,total]，
+	// 防止越界 panic，也避免尾页不足一页时出现空元素。
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Time > items[j].Time
 	})
@@ -176,6 +180,7 @@ func resolveFlowEvidenceSourceTable(flowCollectionID uint64) string {
 
 // canUserAccessRecordAlertRow 用于判断是否允许用户Access记录预警Row。
 func canUserAccessRecordAlertRow(row repositorySecurity.AlertRecordRow, username string) bool {
+	// 有任务编号说明是任务预警（已按 CreatedBy 过滤过）；无任务编号的监控预警再校验会话归属。
 	if strings.TrimSpace(row.TaskNo) != "" {
 		return true
 	}

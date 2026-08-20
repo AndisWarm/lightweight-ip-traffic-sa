@@ -21,6 +21,7 @@ var ErrAlertNotFound = NewServiceError(ServiceErrorCategoryNotFound, "预警记�
 func (s *AlertService) ListAlerts(query requestModel.AlertListQuery, claims *utils.TokenClaims) (responseModel.PagedAlertResponse, error) {
 	query.Page = utils.NormalizePage(query.Page)
 	query.PageSize = utils.NormalizePageSize(query.PageSize)
+	// 普通 USER 只能看到自己创建的预警，ADMIN/MANAGER 不过滤；行级权限在查询层就直接收敛。
 	if claims != nil && strings.EqualFold(strings.TrimSpace(claims.RoleCode), "USER") {
 		query.CreatedBy = strings.TrimSpace(claims.Username)
 	}
@@ -32,6 +33,7 @@ func (s *AlertService) ListAlerts(query requestModel.AlertListQuery, claims *uti
 
 	items := make([]responseModel.AlertListItem, 0, len(rows))
 	for _, row := range rows {
+		// 实时流量监控预警不按 CreatedBy 关联到人，需要再校验监控会话归属，防止用户看到别人的监控预警。
 		if query.CreatedBy != "" && strings.EqualFold(strings.TrimSpace(row.SourceType), "FLOW_MONITOR") && !canUserAccessFlowMonitorAlert(row.SourceLabel, query.CreatedBy) {
 			continue
 		}
@@ -63,6 +65,7 @@ func (s *AlertService) GetAlertDetail(alertID uint64, claims *utils.TokenClaims)
 
 	var cached responseModel.AlertDetailResponse
 	if hit, err := utils.CacheGetJSON(cacheKey, &cached); err == nil && hit {
+		// 缓存命中也要重做行级权限校验：不能因为命中缓存就绕过"USER 只能看自己的预警"。
 		if claims != nil && strings.EqualFold(strings.TrimSpace(claims.RoleCode), "USER") {
 			if cached.Task != nil {
 				task, taskErr := repo.TaskRepository.FindByID(global.DB, cached.Task.TaskID)
@@ -149,6 +152,7 @@ func resolveAlertSourceType(alert *securityModel.AlertRecord) string {
 	if value := strings.TrimSpace(alert.SourceType); value != "" {
 		return value
 	}
+	// 兼容旧数据：没有显式来源类型时，按是否关联任务反推——无任务 ID 视为实时流量监控预警。
 	if alert.TaskID == nil || *alert.TaskID == 0 {
 		return "FLOW_MONITOR"
 	}
@@ -171,6 +175,7 @@ func resolveAlertSourceLabel(alert *securityModel.AlertRecord, task *securityMod
 
 // canUserAccessFlowMonitorAlert 用于判断是否允许用户Access流量监控预警。
 func canUserAccessFlowMonitorAlert(sessionID string, username string) bool {
+	// 监控会话是内存态、无独立用户外键，只能回查会话归属判断当前用户是否有权看这条预警。
 	sessionID = strings.TrimSpace(sessionID)
 	username = strings.TrimSpace(username)
 	if sessionID == "" || username == "" {

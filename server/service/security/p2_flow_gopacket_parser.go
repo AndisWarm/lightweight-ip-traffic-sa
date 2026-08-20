@@ -161,9 +161,11 @@ type flowWindowAccumulator struct {
 
 // newFlowMetricsAccumulator 用于创建并返回新的业务实例。
 func newFlowMetricsAccumulator(targetIP string, localIPs []string, windowSeconds int) *flowMetricsAccumulator {
+	// 窗口秒数未配置时回退到 60 秒，保证后续 PPS 与趋势聚合有合理的时间粒度
 	if windowSeconds <= 0 {
 		windowSeconds = 60
 	}
+	// focusIPs 包含目标 IP 与所有本机 IP，用于把“与本机/目标相关的流量”从背景流量中筛出
 	focusIPs := buildFlowFocusIPs(targetIP, localIPs)
 	return &flowMetricsAccumulator{
 		targetIP:              strings.TrimSpace(targetIP),
@@ -188,21 +190,26 @@ func newFlowMetricsAccumulator(targetIP string, localIPs []string, windowSeconds
 
 // observe 用于累计单条流量报文指标。
 func (a *flowMetricsAccumulator) observe(packet gopacket.Packet) {
+	// 无论是否命中目标，先累计总报文数，用于反映 pcap 文件整体规模
 	a.packetCount++
 
+	// 从以太网帧解析出网络层源/目的 IP；非 IPv4/IPv6 的报文（如纯 ARP）直接跳过
 	srcIP, dstIP, ok := extractPacketIPs(packet)
 	if !ok {
 		return
 	}
 	srcFocus := a.isFocusIP(srcIP)
 	dstFocus := a.isFocusIP(dstIP)
+	// 只统计与目标 IP / 本机 IP 相关的报文，过滤无关背景流量，避免其干扰行为风险分
 	if len(a.focusIPs) > 0 && !srcFocus && !dstFocus {
 		return
 	}
 
+	// 通过过滤的报文才计入“命中数”，它是行为风险分里“命中目标流量”加分项的依据
 	a.matchedPacketCount++
 	captureInfo := packet.Metadata().CaptureInfo
 	packetBytes := len(packet.Data())
+	// 优先用抓包时记录的真实帧长（captureInfo.Length），因为它包含可能被截断的原始帧字节
 	if captureInfo.Length > 0 {
 		packetBytes = captureInfo.Length
 	}
@@ -214,12 +221,14 @@ func (a *flowMetricsAccumulator) observe(packet gopacket.Packet) {
 		if a.lastSeenAt.IsZero() || packetTimestamp.After(a.lastSeenAt) {
 			a.lastSeenAt = packetTimestamp
 		}
+		// 以首个报文的抓包时间作为窗口基准，后续窗口按 windowSeconds 对齐切分
 		if a.windowBaseStart.IsZero() {
 			a.windowBaseStart = packetTimestamp
 		}
 	}
 	a.byteCount += int64(packetBytes)
 
+	// 一步完成传输层/协议识别、目标端口判定、对端 IP 解析与双向会话 key 构造
 	proto, targetPort, peerIP, sessionKey := classifyPacketFlow(packet, srcIP, dstIP, a.targetIP, a.focusIPs)
 	inbound := dstFocus && !srcFocus
 	a.protocolCounts[proto]++
@@ -232,16 +241,19 @@ func (a *flowMetricsAccumulator) observe(packet gopacket.Packet) {
 		a.peerCounts[peerIP]++
 	}
 	if sessionKey != "" {
+		// 用 map 去重，最终 len(sessionKeys) 即为双向会话数
 		a.sessionKeys[sessionKey] = struct{}{}
 	}
 
 	if tcpLayer, ok := packet.TransportLayer().(*layers.TCP); ok {
+		// 只有入站方向的新建连接（SYN 且非 ACK）才算“被探测”，避免把正常握手的 ACK 也算进去
 		if inbound && tcpLayer.SYN && !tcpLayer.ACK {
 			a.synProbeCount++
 		}
 		if tcpLayer.RST {
 			a.tcpResetCount++
 		}
+		// HTTP / TLS 没有独立 gopacket 层，需从 TCP 载荷里按特征字节识别
 		if method, host, statusCode, isHTTP := extractHTTPHint(tcpLayer.Payload); isHTTP {
 			a.httpCount++
 			a.httpMethodCounts[method]++
@@ -491,14 +503,17 @@ func extractHTTPHint(payload []byte) (string, string, string, bool) {
 }
 
 // extractTLSServerName 用于提取请求、令牌或流量中的关键信息。
+// TLS 握手明文阶段的 ClientHello 会携带 SNI，可用来识别加密流量真正访问的域名（否则只剩端口号）
 func extractTLSServerName(payload []byte) (string, string, bool) {
 	if len(payload) < 9 {
 		return "", "", false
 	}
+	// 0x16 = Handshake 记录类型，0x03 0x01~0x04 = TLS 1.0~1.3 版本号
 	if payload[0] != 0x16 || payload[1] != 0x03 {
 		return "", "", false
 	}
 	tlsVersion := formatTLSVersion(payload[1], payload[2])
+	// payload[5] == 0x01 表示 ClientHello 握手消息类型
 	if payload[5] != 0x01 {
 		return "", tlsVersion, true
 	}
@@ -526,6 +541,8 @@ func formatTLSVersion(major byte, minor byte) string {
 }
 
 // parseTLSClientHelloSNI 用于解析输入数据并转换为内部模型。
+// 按 TLS ClientHello 的定长结构逐段跳过：随机数、会话 ID、密码套件、压缩方法，最终定位到扩展区
+// 再从扩展区里找 type=0x0000 的 SNI 扩展，取出其中的服务器名（域名）
 func parseTLSClientHelloSNI(payload []byte) (string, error) {
 	if len(payload) < 43 {
 		return "", fmt.Errorf("tls payload too short")
@@ -563,6 +580,7 @@ func parseTLSClientHelloSNI(payload []byte) (string, error) {
 	if len(payload) < limit {
 		return "", fmt.Errorf("tls extensions overflow")
 	}
+	// 遍历所有扩展，只有 type=0x0000（SNI）才需要解析
 	for offset+4 <= limit {
 		extensionType := binary.BigEndian.Uint16(payload[offset : offset+2])
 		extensionLen := int(binary.BigEndian.Uint16(payload[offset+2 : offset+4]))
@@ -582,6 +600,7 @@ func parseTLSClientHelloSNI(payload []byte) (string, error) {
 		if serverNameListLen <= 0 || offset+serverNameListLen > limit {
 			return "", fmt.Errorf("tls sni list overflow")
 		}
+		// SNI 名称类型 0x00 表示 host_name（域名）
 		nameType := payload[offset]
 		if nameType != 0x00 {
 			return "", fmt.Errorf("unsupported tls sni type")
@@ -599,12 +618,14 @@ func parseTLSClientHelloSNI(payload []byte) (string, error) {
 
 // recordPayloadEntropy 用于记录载荷Entropy。
 func recordPayloadEntropy(a *flowMetricsAccumulator, payload []byte, peerIP string) {
+	// 小于 64 字节的载荷样本太少，熵值不稳定，跳过以免误判
 	if a == nil || len(payload) < 64 {
 		return
 	}
 	entropy := estimatePayloadEntropy(payload)
 	a.totalEntropy += entropy
 	a.entropySamples++
+	// 熵越接近 8 越接近随机分布，通常意味着加密、压缩或隧道混淆
 	if entropy >= 7.2 {
 		a.highEntropyCount++
 		if peerIP != "" {
@@ -618,6 +639,7 @@ func estimatePayloadEntropy(payload []byte) float64 {
 	if len(payload) == 0 {
 		return 0
 	}
+	// Shannon 熵：H = -Σ p(x)·log2(p(x))，按字节频次分布度量载荷的随机程度，取值范围 0~8
 	var counts [256]int
 	for _, item := range payload {
 		counts[int(item)]++
@@ -645,6 +667,7 @@ func computePeakPPS(windows map[int]*flowWindowAccumulator, windowSeconds int) f
 	peak := 0.0
 	for _, item := range windows {
 		durationSeconds := float64(windowSeconds)
+		// 首/末窗口可能不满一个完整窗口，用实际跨度计算 PPS，避免用满窗口时长拉低峰值
 		if !item.WindowStart.IsZero() && !item.WindowEnd.IsZero() {
 			actual := item.WindowEnd.Sub(item.WindowStart).Seconds()
 			if actual > 0 && actual < durationSeconds {
@@ -663,6 +686,7 @@ func computePeakPPS(windows map[int]*flowWindowAccumulator, windowSeconds int) f
 }
 
 // computeBurstScore 用于计算Burst评分指标。
+// 公式：min(PeakPPS * 2, 100)，用于把峰值包速率放大映射到 0~100 的突发分
 func computeBurstScore(peakPPS float64) float64 {
 	score := peakPPS * 2
 	if score > 100 {
@@ -672,6 +696,8 @@ func computeBurstScore(peakPPS float64) float64 {
 }
 
 // computeScanScore 用于计算Scan评分指标。
+// 公式：min(唯一目标端口数*2.5 + SYN探测数*1.2 + RST数*0.2, 100)
+// 端口数与 SYN 探测是端口扫描的直接证据，RST 往往来自大量被拒绝的连接，作为弱信号补充
 func computeScanScore(a *flowMetricsAccumulator) float64 {
 	if a == nil {
 		return 0
@@ -736,6 +762,8 @@ func buildPayloadEntropyIndicators(a *flowMetricsAccumulator) map[string]any {
 }
 
 // buildDirectionalityIndicators 用于构建DirectionalityIndicators。
+// 统计入站/出站的报文与字节占比，方向性偏置（packetBias/byteBias 接近 1）暗示流量几乎单向
+// 单向流量常见于扫描、单向攻击或数据外传，是行为风险分中的加分依据
 func buildDirectionalityIndicators(a *flowMetricsAccumulator) map[string]any {
 	if a == nil || len(a.windows) == 0 {
 		return nil
@@ -756,6 +784,7 @@ func buildDirectionalityIndicators(a *flowMetricsAccumulator) map[string]any {
 	byteBias := 0.0
 	dominantDirection := "balanced"
 	if totalPackets > 0 {
+		// packetBias = 占比大的一侧 / 总包数，越接近 1 表示越单向
 		packetBias = round2(float64(maxUint64(inboundPackets, outboundPackets)) / float64(totalPackets))
 		switch {
 		case inboundPackets > outboundPackets:
@@ -779,6 +808,7 @@ func buildDirectionalityIndicators(a *flowMetricsAccumulator) map[string]any {
 }
 
 // buildPortDensityIndicators 用于构建PortDensityIndicators。
+// 端口密度 = 唯一目标端口数 / 会话数，衡量“单位会话接触了多少端口”，数值越大越像扫描
 func buildPortDensityIndicators(a *flowMetricsAccumulator) map[string]any {
 	if a == nil {
 		return nil
@@ -961,6 +991,7 @@ func extractPacketIPs(packet gopacket.Packet) (string, string, bool) {
 }
 
 // classifyPacketFlow 用于执行classifyPacket流量流程。
+// 按传输层协议分别归类：TCP/UDP 下再识别应用协议并解析端口/对端/会话 key，ICMP 与其它网络层协议单独处理
 func classifyPacketFlow(packet gopacket.Packet, srcIP string, dstIP string, targetIP string, focusIPs map[string]struct{}) (string, string, string, string) {
 	if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
 		tcp := tcpLayer.(*layers.TCP)
@@ -1006,10 +1037,13 @@ func formatObservedPort(port int) string {
 }
 
 // resolveObservedPort 用于解析ObservedPort。
+// 目标端口的选择是启发式：优先以目标 IP / 关注 IP 所在的一侧为基准取“对端端口”，
+// 否则用临时端口(49152~65535)排除法和服务端口(<=1024 或 8080/8443/3389)判定服务端口
 func resolveObservedPort(srcPort int, dstPort int, srcIP string, dstIP string, targetIP string, focusIPs map[string]struct{}) int {
 	targetIP = strings.TrimSpace(targetIP)
 	srcIP = strings.TrimSpace(srcIP)
 	dstIP = strings.TrimSpace(dstIP)
+	// 明确命中目标 IP 时，取目标 IP 那侧的端口
 	switch {
 	case targetIP != "" && srcIP == targetIP:
 		return normalizeObservedPort(srcPort)
@@ -1020,14 +1054,17 @@ func resolveObservedPort(srcPort int, dstPort int, srcIP string, dstIP string, t
 	srcFocus := isIPInSet(srcIP, focusIPs)
 	dstFocus := isIPInSet(dstIP, focusIPs)
 	switch {
+	// 只一侧是关注 IP 时，服务端口在对端，取对端端口
 	case srcFocus && !dstFocus:
 		return normalizeObservedPort(dstPort)
 	case dstFocus && !srcFocus:
 		return normalizeObservedPort(srcPort)
+	// 无明确方向时，临时端口大概率是客户端源端口，排除它得到服务端口
 	case isLikelyEphemeralPort(srcPort) && !isLikelyEphemeralPort(dstPort):
 		return normalizeObservedPort(dstPort)
 	case isLikelyEphemeralPort(dstPort) && !isLikelyEphemeralPort(srcPort):
 		return normalizeObservedPort(srcPort)
+	// 用服务端口特征做兜底判断
 	case isPreferredServicePort(srcPort) && !isPreferredServicePort(dstPort):
 		return normalizeObservedPort(srcPort)
 	case isPreferredServicePort(dstPort) && !isPreferredServicePort(srcPort):
@@ -1109,6 +1146,7 @@ func isIPInSet(ip string, values map[string]struct{}) bool {
 }
 
 // classifyApplicationProtocol 用于执行classifyApplicationProtocol流程。
+// 基于端口号先做应用协议候选判断（DNS 有独立层直接命中），后续再结合载荷字节进一步确认
 func classifyApplicationProtocol(packet gopacket.Packet, fallback string, srcPort int, dstPort int) string {
 	switch {
 	case packet.Layer(layers.LayerTypeDNS) != nil:
@@ -1127,6 +1165,8 @@ func classifyApplicationProtocol(packet gopacket.Packet, fallback string, srcPor
 }
 
 // buildBidirectionalSessionKey 用于构建BidirectionalSessionKey。
+// 双向会话 key：把源/目的端点字典序排序后再拼接，使“A→B”与“B→A”的两个方向归一化为同一个 key
+// 这样用 map 去重后，正反两个方向的包只会被统计成同一条会话
 func buildBidirectionalSessionKey(proto string, srcIP string, dstIP string, srcPort int, dstPort int) string {
 	left := fmt.Sprintf("%s:%d", srcIP, srcPort)
 	right := fmt.Sprintf("%s:%d", dstIP, dstPort)
@@ -1137,6 +1177,7 @@ func buildBidirectionalSessionKey(proto string, srcIP string, dstIP string, srcP
 }
 
 // buildFlowAnomalyCandidates 用于构建流量AnomalyCandidates。
+// 四类异常候选是行为风险分的“大额加分项”，分别对应端口扫描、DNS 突增、ICMP 探测、TCP RST 突增
 func buildFlowAnomalyCandidates(a *flowMetricsAccumulator) []flowAnomalyCandidate {
 	items := make([]flowAnomalyCandidate, 0, 4)
 	if len(a.uniqueTargetPorts) >= 8 && a.synProbeCount >= 8 {
@@ -1175,16 +1216,22 @@ func buildFlowAnomalyCandidates(a *flowMetricsAccumulator) []flowAnomalyCandidat
 }
 
 // buildFlowBehaviorRiskScore 用于构建流量Behavior风险评分。
+// 行为风险分 = 4(命中目标流量) + Σ异常候选分 + 突发分*0.08 + 扫描分*0.12
+//            + DNS/HTTP/TLS 事件阈值分 + 高熵载荷阈值分 + 方向性偏置分 + 端口密度/高危端口分，上限 100
 func buildFlowBehaviorRiskScore(metrics flowParseMetrics) float64 {
 	score := 0.0
+	// 命中目标流量就给 4 分基础分，表示“确实存在与目标相关的动态行为”
 	if metrics.MatchedPacketCount > 0 {
 		score += 4
 	}
+	// 异常候选分值较大（42/20/14/8），是行为风险的主要来源
 	for _, item := range metrics.AnomalyCandidates {
 		score += item.Score
 	}
+	// 突发与扫描按系数折算成小幅加分，避免单一指标压过候选规则
 	score += metrics.BurstScore * 0.08
 	score += metrics.ScanScore * 0.12
+	// 以下为应用层事件数量的阈值加分，超过阈值说明存在明显协议活动
 	if metrics.DNSEventCount >= 40 {
 		score += 3
 	}
@@ -1194,15 +1241,18 @@ func buildFlowBehaviorRiskScore(metrics flowParseMetrics) float64 {
 	if metrics.TLSEventCount >= 20 {
 		score += 2
 	}
+	// 高熵载荷达到 24 个，暗示存在较多加密/混淆流量
 	if entropyIndicators := metrics.PayloadEntropyIndicators; len(entropyIndicators) != 0 && toInt(entropyIndicators["highEntropyPacketCount"]) >= 24 {
 		score += 4
 	}
+	// 方向性偏置 >= 0.92 表示流量几乎单向，符合扫描/单向攻击的形态
 	if directionality := metrics.DirectionalityIndicators; len(directionality) != 0 {
 		if dominantDirection := fmt.Sprintf("%v", directionality["dominantDirection"]); dominantDirection != "balanced" && toFloat64(directionality["packetBias"]) >= 0.92 {
 			score += 4
 		}
 	}
 	if portDensity := metrics.PortDensityIndicators; len(portDensity) != 0 {
+		// 目标端口越多、端口密度越高、高危端口越多，越像端口扫描/爆破
 		if toInt(portDensity["uniqueTargetPortCount"]) >= 10 {
 			score += 4
 		}
@@ -1343,6 +1393,7 @@ func sortStringIntMap(values map[string]int) []flowStringCount {
 }
 
 // parseOfflinePCAPWithGopacket 用于解析输入数据并转换为内部模型。
+// 离线解析主流程：打开文件 → 逐包读取 → 累计指标，读到 EOF 才视为解析完成
 func parseOfflinePCAPWithGopacket(ctx context.Context, req FlowParseRequest, resolvedPath string) (flowParseMetrics, error) {
 	format, packetSource, closer, err := openOfflinePacketSource(resolvedPath)
 	if err != nil {
@@ -1352,6 +1403,7 @@ func parseOfflinePCAPWithGopacket(ctx context.Context, req FlowParseRequest, res
 
 	accumulator := newFlowMetricsAccumulator(req.TargetIP, req.LocalIPs, req.WindowSeconds)
 	for {
+		// 每读一包前先检查上下文是否被取消，保证大文件解析能被外部超时/停止及时打断
 		select {
 		case <-ctx.Done():
 			return flowParseMetrics{}, ctx.Err()
@@ -1360,6 +1412,7 @@ func parseOfflinePCAPWithGopacket(ctx context.Context, req FlowParseRequest, res
 
 		packet, err := packetSource.NextPacket()
 		if err != nil {
+			// io.EOF 表示文件正常读完，属于预期结束，不是错误
 			if err == io.EOF {
 				break
 			}
@@ -1386,11 +1439,13 @@ func openOfflinePacketSource(path string) (string, *gopacket.PacketSource, func(
 }
 
 // buildOfflinePacketSource 用于构建OfflinePacket来源。
+// 通过文件头魔数区分 pcapng（0x0A0D0D0A）与传统 pcap，选择对应读取器，二者后续解析逻辑一致
 func buildOfflinePacketSource(file *os.File) (string, *gopacket.PacketSource, error) {
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(file, header); err != nil {
 		return "", nil, fmt.Errorf("读取 pcap 文件头失败: %w", err)
 	}
+	// 读完 4 字节后把文件指针拨回开头，让下游读取器从完整文件头开始解析
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", nil, fmt.Errorf("重置 pcap 文件指针失败: %w", err)
 	}

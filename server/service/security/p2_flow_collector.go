@@ -16,6 +16,7 @@ type RealFlowCollector struct{}
 
 // Collect 用于执行Collect流程。
 func (c RealFlowCollector) Collect(targetIP string, cfg config.SecurityConfig) (FlowCollectedData, error) {
+	// 流量采集是"增强链路"而非主链路硬依赖：按配置模式选择解析器，失败只记录失败状态，不阻断 IP 多特征主链路。
 	parseRequest := buildFlowParseRequest(targetIP, cfg)
 	sourceName := resolveFlowCollectorSourceName(parseRequest.Mode)
 	configVersion := buildCollectorConfigVersion(cfg)
@@ -42,6 +43,8 @@ func (c RealFlowCollector) Collect(targetIP string, cfg config.SecurityConfig) (
 }
 
 // resolveFlowParser 用于解析流量Parser。
+// 按流量模式选择解析器：offline_pcap 走 gopacket 离线解析，online_capture 走 Npcap 在线抓包，
+// disabled 返回关闭状态，未知模式一律落到 sample 样本解析器（仅演示用，不代表真实抓包）。
 func resolveFlowParser(mode FlowParseMode) FlowParser {
 	switch mode {
 	case FlowParseModeOfflinePCAP:
@@ -239,6 +242,8 @@ func (p offlinePCAPFlowParser) Name() string {
 
 // Parse 用于解析流量输入并生成标准流量结果。
 func (p offlinePCAPFlowParser) Parse(ctx context.Context, req FlowParseRequest) (FlowParseResult, error) {
+	// 离线 pcap 解析是独立编排入口：路径为空、路径无效、文件不存在、指向目录、解析失败都走失败结果而非报错返回，
+	// 保证即使没有可用的 pcap 文件，任务也能继续，只是流量维度留空并附带失败说明。
 	path := strings.TrimSpace(req.PcapFilePath)
 	if path == "" {
 		return FlowParseResult{
@@ -372,6 +377,8 @@ func (p onlineCaptureFlowParser) Name() string {
 
 // Parse 用于解析流量输入并生成标准流量结果。
 func (p onlineCaptureFlowParser) Parse(ctx context.Context, req FlowParseRequest) (FlowParseResult, error) {
+	// 该解析器只做"入口校验"（网卡是否存在、是否就绪），不真正抓包；
+	// 真正的短时抓包由 realOnlineCaptureFlowParser（Npcap + gopacket）承接，这里标记 ParserReady=false。
 	iface := strings.TrimSpace(req.InterfaceName)
 	status := FlowStatusWaitingPermission
 	summary := "在线抓包入口待授权，需提供可授权网卡后才能接入持续采集调度。"

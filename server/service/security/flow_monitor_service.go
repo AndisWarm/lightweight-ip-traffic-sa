@@ -21,15 +21,19 @@ import (
 type FlowMonitorService struct{}
 
 const (
+	// 每个分析窗口 5 秒：实时监控按固定窗口采样，窗口越短响应越快，太短则统计噪声大
 	flowMonitorWindowSeconds      = 5
 	flowMonitorRefreshIntervalSec = 5
+	// 单次抓包最长 7 秒：给 5 秒窗口留缓冲，避免边界处因调度抖动提前结束
 	flowMonitorCaptureTimeout     = 7 * time.Second
+	// 预警冷却 30 秒：同一指纹在冷却期内不再重复告警，避免持续高风险刷屏
 	flowMonitorAlertCooldown      = 30 * time.Second
 )
 
 var (
 	errFlowMonitorSessionNotFound = NewServiceError(ServiceErrorCategoryNotFound, "实时流量监控会话不存在")
 	errFlowMonitorAlreadyRunning  = NewServiceError(ServiceErrorCategoryConflict, "已有实时流量监控正在运行，请先暂停当前监控")
+	// 监控会话只保存在内存 map 中：会话生命周期短、停止即失效，落库会带来无意义的 IO 与表膨胀
 	flowMonitorSessions           = newFlowMonitorSessionStore()
 )
 
@@ -202,6 +206,8 @@ func (svc *FlowMonitorService) StartSession(req requestModel.StartFlowMonitorSes
 }
 
 // runSession 用于编排流量监控服务流程。
+// 实时监控的核心循环：以 5 秒窗口反复抓包解析 → 计算行为风险 → 判定预警，直到 ctx 被取消
+// 结果只写入内存态的会话对象，不写流量三表，避免持续监听导致表无限膨胀
 func (svc *FlowMonitorService) runSession(ctx context.Context, state *flowMonitorSessionState) {
 	parser := realOnlineCaptureFlowParser{}
 	for {
@@ -224,6 +230,7 @@ func (svc *FlowMonitorService) runSession(ctx context.Context, state *flowMonito
 
 		analyzedAt := time.Now()
 		if err != nil {
+			// 抓包失败不终止会话，标记失败后继续下一轮，便于网卡短暂异常后自动恢复
 			svc.updateSessionFailure(state, analyzedAt, err)
 			continue
 		}
@@ -279,6 +286,7 @@ func (svc *FlowMonitorService) markSessionStopped(state *flowMonitorSessionState
 }
 
 // tryCreateMonitorAlert 用于编排流量监控服务流程。
+// 行为风险达到高风险阈值时尝试生成预警；用“指纹 + 冷却时间”去重，防止持续高风险每 5 秒刷一条告警
 func (svc *FlowMonitorService) tryCreateMonitorAlert(state *flowMonitorSessionState, result FlowParseResult) (*flowMonitorLatestAlert, error) {
 	cfg := loadRuntimeSecurityConfig()
 	score := buildAdjustedFlowMonitorScoreResult(result, cfg)
@@ -289,6 +297,7 @@ func (svc *FlowMonitorService) tryCreateMonitorAlert(state *flowMonitorSessionSt
 	}
 
 	now := time.Now()
+	// 指纹包含网卡 + 风险等级 + 异常候选名，同指纹在冷却期内视为“同一次告警”
 	fingerprint := buildFlowMonitorAlertFingerprint(decision, result, state.InterfaceName)
 	state.mu.RLock()
 	lastFingerprint := state.lastAlertFingerprint
@@ -302,6 +311,7 @@ func (svc *FlowMonitorService) tryCreateMonitorAlert(state *flowMonitorSessionSt
 	if err := repository.RepositoryGroupApp.SecurityRepositoryGroup.AlertRepository.Create(global.DB, alertRecord); err != nil {
 		return nil, err
 	}
+	// 预警写库后清空总览缓存，让首页的预警数尽快刷新
 	_ = utils.CacheDelete(utils.SecurityDashboardSummaryCacheKey)
 
 	latest := &flowMonitorLatestAlert{
@@ -334,6 +344,7 @@ func (svc *FlowMonitorService) tryCreateMonitorAlert(state *flowMonitorSessionSt
 }
 
 // buildFlowMonitorScoreResult 用于构建流量监控评分Result。
+// 实时监控不绑定任务，因此只有行为风险分参与评分，其余三维固定为 0，算法版本单独标注
 func buildFlowMonitorScoreResult(result FlowParseResult, cfg config.SecurityConfig) ScoreResult {
 	scoreValue := round2(result.BehaviorRiskScore)
 	return ScoreResult{
@@ -368,6 +379,8 @@ func resolveFlowMonitorAlertTarget(result FlowParseResult, interfaceName string)
 }
 
 // buildFlowMonitorAlertFingerprint 用于构建流量监控预警Fingerprint。
+// 指纹 = 网卡 + 风险等级 + 异常候选名，用于冷却期去重；没有异常候选时用扫描/突发分补充分量，
+// 保证“同一风险形态”能被识别为同一条告警，而风险形态变化后又能再次告警
 func buildFlowMonitorAlertFingerprint(decision *AlertDecision, result FlowParseResult, interfaceName string) string {
 	parts := []string{strings.TrimSpace(interfaceName)}
 	if decision != nil {
@@ -388,6 +401,7 @@ func buildFlowMonitorAlertFingerprint(decision *AlertDecision, result FlowParseR
 }
 
 // toFlowMonitorAlertRecordModel 用于转换并生成流量监控预警记录模型。
+// 实时监控预警无任务 ID / 评分 ID，SourceType 固定为 FLOW_MONITOR，与任务预警区分开
 func toFlowMonitorAlertRecordModel(sessionID string, interfaceName string, targetLabel string, decision *AlertDecision) *securityModel.AlertRecord {
 	if decision == nil || !decision.ShouldAlert {
 		return nil
@@ -758,6 +772,7 @@ func appendFlowMonitorMetricPoint(points []responseModel.FlowMonitorMetricPoint,
 		TLSEventCount:     readFlowMetricUint64(metrics, "tlsEventCount"),
 	}
 	points = append(points, point)
+	// 趋势只保留最近 24 个采样点，避免长时间监控时内存无限增长（这也是实时监控不写库的原因之一）
 	if len(points) > 24 {
 		return append([]responseModel.FlowMonitorMetricPoint(nil), points[len(points)-24:]...)
 	}
@@ -765,6 +780,7 @@ func appendFlowMonitorMetricPoint(points []responseModel.FlowMonitorMetricPoint,
 }
 
 // buildAdjustedFlowMonitorScoreResult 用于构建Adjusted流量监控评分Result。
+// 与任务评分不同：实时监控只用行为风险独立判定，并叠加“良性 Web 流量抑制”等调权说明
 func buildAdjustedFlowMonitorScoreResult(result FlowParseResult, cfg config.SecurityConfig) ScoreResult {
 	scoreValue := round2(result.BehaviorRiskScore)
 	ruleAdjustment := "实时监控未绑定任务，按流量行为风险独立判定"
@@ -810,6 +826,8 @@ func tuneFlowMonitorResult(result FlowParseResult) FlowParseResult {
 }
 
 // normalizeFlowMonitorBehaviorScore 用于归一化输入参数或业务指标。
+// 实时监控误报率较高，这里做“向下调权”：识别为常见 Web 浏览流量时压低风险上限，
+// 没有高置信度扫描/突发特征时抑制高分放大，最终仍夹在 0~100
 func normalizeFlowMonitorBehaviorScore(rawScore float64, metrics map[string]any) (float64, string) {
 	score := round2(rawScore)
 	if score <= 0 {
@@ -844,6 +862,7 @@ func normalizeFlowMonitorBehaviorScore(rawScore float64, metrics map[string]any)
 }
 
 // shouldTriggerFlowMonitorAlert 用于执行shouldTrigger流量监控预警流程。
+// 预警判定：分数 >= 高风险阈值，且不是“看起来像良性 Web 浏览又无强异常信号”的流量
 func shouldTriggerFlowMonitorAlert(score float64, metrics map[string]any, cfg config.SecurityConfig) bool {
 	if score < cfg.HighRiskThreshold {
 		return false
@@ -863,15 +882,18 @@ func readFlowMonitorAdjustmentSummary(metrics map[string]any) string {
 }
 
 // isLikelyBenignWebTraffic 用于判断输入是否满足指定条件。
+// 通过 HTTP/TLS 线索 + 低端口密度 + 低扫描/突发分判断“像正常网页浏览”，用于抑制误报
 func isLikelyBenignWebTraffic(metrics map[string]any) bool {
 	if len(metrics) == 0 {
 		return false
 	}
 	httpHosts := decodeJSONArrayOfObjects(mustJSONText(metrics["httpHostHints"]))
 	tlsHints := decodeJSONArrayOfObjects(mustJSONText(metrics["tlsHandshakeHints"]))
+	// 没有任何 HTTP Host 或 TLS SNI 线索，谈不上“网页浏览”
 	if len(httpHosts) == 0 && len(tlsHints) == 0 {
 		return false
 	}
+	// 一旦命中高置信度异常候选（端口扫描/ICMP 探测），优先按恶意处理，不做良性降权
 	if hasHighConfidenceFlowMonitorAnomaly(metrics) {
 		return false
 	}
@@ -903,6 +925,7 @@ func hasOnlyLowConfidenceFlowMonitorSignals(metrics map[string]any) bool {
 }
 
 // hasStrongFlowMonitorSignal 用于判断目标是否具备指定数据或能力。
+// 高置信度异常候选，或扫描/突发/高危端口达到显著水平时，视为“强信号”，不可按良性降权
 func hasStrongFlowMonitorSignal(metrics map[string]any) bool {
 	if hasHighConfidenceFlowMonitorAnomaly(metrics) {
 		return true
@@ -914,6 +937,7 @@ func hasStrongFlowMonitorSignal(metrics map[string]any) bool {
 }
 
 // hasHighConfidenceFlowMonitorAnomaly 用于判断目标是否具备指定数据或能力。
+// 端口扫描与 ICMP 探测是最强的攻击信号，命中即视为高置信度异常
 func hasHighConfidenceFlowMonitorAnomaly(metrics map[string]any) bool {
 	names := extractFlowMonitorAnomalyNames(metrics)
 	for _, name := range names {

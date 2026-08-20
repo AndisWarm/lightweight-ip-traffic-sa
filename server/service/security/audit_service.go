@@ -49,6 +49,8 @@ func (s *AuditService) ListAuditLogs(query requestModel.AuditLogQuery) (response
 			CreatedAt:   row.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
+	// 审计列表把"安全域操作日志"和"系统域登录日志"合并展示：
+	// 未指定类别或指定 LOGIN 时，额外拉取登录日志，统一成同一种列表项。
 	if strings.TrimSpace(query.Category) == "" || strings.EqualFold(strings.TrimSpace(query.Category), "LOGIN") {
 		loginRows, loginErr := (&repositorySystem.AuditRepository{}).ListLoginLogs(query.PageSize)
 		if loginErr == nil {
@@ -137,6 +139,7 @@ type AuditLogEntry struct {
 func buildSecurityAuditLog(entry AuditLogEntry) *securityModel.AuditLog {
 	category := strings.TrimSpace(entry.Category)
 	action := strings.TrimSpace(entry.Action)
+	// 分类和动作是审计的最小要素，缺失则不落库，避免产生无法归类的噪声审计记录。
 	if category == "" || action == "" {
 		return nil
 	}

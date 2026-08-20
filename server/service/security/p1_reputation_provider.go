@@ -69,6 +69,7 @@ func (p enhancedReputationSourceProvider) CollectReputation(ctx context.Context,
 	attemptedSources := make([]string, 0, 2)
 	sourceChain := make([]string, 0, 2)
 
+	// 本地黑名单是默认主方案：离线、免 API Key、可自主维护；AbuseIPDB 作为可选增强源，配置完整且启用后才访问公网。
 	if cfg.Source.LocalBlacklist.Enabled {
 		attemptedSources = append(attemptedSources, "local-blacklist")
 		entry, matchType, err := loadAndMatchBlacklist(targetIP, cfg.Source.LocalBlacklist)
@@ -84,6 +85,7 @@ func (p enhancedReputationSourceProvider) CollectReputation(ctx context.Context,
 			log.Printf("基础信誉降级，source=local-blacklist target=%s err=%v", targetIP, err)
 		} else if entry != nil {
 			sourceChain = append(sourceChain, "local-blacklist")
+			// 命中条目优先用条目自带分数（支持逐条精细控制）；条目未配分或越界时回退到 matchScore，再兜底到 92。
 			matchScore := entry.Score
 			if matchScore <= 0 || matchScore > 100 {
 				matchScore = cfg.Source.LocalBlacklist.MatchScore
@@ -112,6 +114,8 @@ func (p enhancedReputationSourceProvider) CollectReputation(ctx context.Context,
 			result.RawPayload["attemptedSources"] = attemptedSources
 			result.RawPayload["sourceChain"] = sourceChain
 			result.RawPayload["evidenceItems"] = evidenceItems
+			// 本地黑名单命中是解释力最强的信誉证据，直接采用条目分并提前返回，
+			// 不再叠加 AbuseIPDB，避免对同一目标重复判分、结果失真。
 			return result, nil
 		} else {
 			sourceChain = append(sourceChain, "local-blacklist")
@@ -172,6 +176,7 @@ func (p enhancedReputationSourceProvider) CollectReputation(ctx context.Context,
 func collectAbuseIPDBReputation(ctx context.Context, targetIP string, cfg config.SecurityConfig) (map[string]any, securityEvidenceItem, float64, error) {
 	baseURL := strings.TrimSpace(cfg.Source.AbuseIPDB.BaseURL)
 	apiKey := strings.TrimSpace(cfg.Source.AbuseIPDB.APIKey)
+	// AbuseIPDB 依赖 API Key，未配置或配置不完整时直接返回错误，由上层记录降级并继续，不阻断任务主链路。
 	if baseURL == "" || apiKey == "" {
 		return nil, securityEvidenceItem{}, 0, fmt.Errorf("abuseipdb config incomplete")
 	}
@@ -209,6 +214,8 @@ func collectAbuseIPDBReputation(ctx context.Context, targetIP string, cfg config
 		return nil, securityEvidenceItem{}, 0, fmt.Errorf("invalid abuseipdb payload: %w", err)
 	}
 
+	// 白名单表示该 IP 已被运营方标记为可信（如 CDN、云厂商合法出口），
+	// 即使 abuseConfidenceScore 较高也压到 20，避免把可信基础设施误报成恶意目标。
 	score := float64(payload.Data.AbuseConfidenceScore)
 	if payload.Data.IsWhitelisted && score > 20 {
 		score = 20
