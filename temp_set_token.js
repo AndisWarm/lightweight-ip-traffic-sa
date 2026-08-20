@@ -1,0 +1,2 @@
+﻿localStorage.setItem('sa_access_token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiYWRtaW4iLCJkaXNwbGF5TmFtZSI6IkFkbWluIiwicm9sZUNvZGUiOiJBRE1JTiIsInN1YiI6ImFkbWluIiwiZXhwIjoxNzc1OTE1MjM3LCJpYXQiOjE3NzU4Mjg4Mzd9.DghdmALUK3RiktAMu4yeuh_0WSlxPoNXqm9KyFWfDE0')
+location.href='/security/task/detail/11'

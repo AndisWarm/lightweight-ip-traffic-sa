@@ -1,0 +1,25 @@
+{
+  "name": "lightweight-ip-traffic-sa-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.8.2",
+    "echarts": "^5.5.1",
+    "echarts-maps": "^1.1.0",
+    "element-plus": "^2.13.6",
+    "pinia": "^2.2.2",
+    "vue": "^3.5.31",
+    "vue-echarts": "^7.0.3",
+    "vue-router": "^4.4.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.3",
+    "vite": "^6.2.3"
+  }
+}

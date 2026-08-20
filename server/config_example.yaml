@@ -1,0 +1,58 @@
+app:
+  port: "8080"
+
+database:
+  dsn: "root:root@tcp(127.0.0.1:3306)/light_situation_awareness?charset=utf8mb4&parseTime=True&loc=Local"
+  maxIdleConns: 5
+  maxOpenConns: 10
+
+redis:
+  enabled: true
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  poolSize: 10
+
+security:
+  demoMode: true
+  defaultCreatedBy: "admin"
+  highRiskThreshold: 75
+  criticalRiskThreshold: 90
+  source:
+    whoisEndpoint: "local-demo"
+    reputationEndpoint: "local-demo"
+    geoLite2:
+      enabled: true
+      countryDBPath: "data/geoip/GeoLite2-Country.mmdb"
+      cityDBPath: "data/geoip/GeoLite2-City.mmdb"
+      asnDBPath: "data/geoip/GeoLite2-ASN.mmdb"
+      cacheTTLSeconds: 86400
+    rdap:
+      enabled: true
+      baseURL: "https://rdap.org/ip/"
+      backupBaseURLs:
+        - "https://rdap.arin.net/registry/ip/"
+        - "https://rdap.db.ripe.net/ip/"
+        - "https://rdap.apnic.net/ip/"
+        - "https://rdap.afrinic.net/rdap/ip/"
+        - "https://rdap.lacnic.net/rdap/ip/"
+      timeoutSeconds: 3
+      cacheTTLSeconds: 86400
+    localBlacklist:
+      enabled: true
+      filePath: "data/security/local-blacklist.txt"
+      reloadIntervalSeconds: 300
+      matchScore: 92
+      defaultScore: 20
+  alert:
+    notifyChannel: "SYSTEM"
+  cache:
+    dashboardSummaryTTLSeconds: 30
+    securityConfigTTLSeconds: 300
+    detailQueryTTLSeconds: 120
+    collectorTTLSeconds: 1800
+  weights:
+    whoisWeight: 0.20
+    reputationWeight: 0.35
+    attackSurfaceWeight: 0.30
+    behaviorWeight: 0.15

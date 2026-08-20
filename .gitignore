@@ -1,0 +1,65 @@
+# 🔥 全局通用忽略（所有项目都需要）
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统垃圾文件
+.DS_Store
+Thumbs.db
+*.tmp
+
+# 日志文件
+*.log
+logs/
+
+# 开发计划
+deliverables/
+
+# 临时文件
+**/.codex-*/
+
+.serena/
+
+AGENTS.md
+
+# 测试产物
+tests/
+output/
+
+# GeoLite 数据库
+# server/data/geoip/*.mmdb
+
+
+# 🖥️ 前端项目 web (Vue/Vite) 忽略
+# 依赖包（必忽略）
+web/node_modules/
+
+# 打包编译产物（必忽略）
+web/dist/
+web/.vite/
+
+# 环境变量/敏感配置
+web/.env
+web/.env.local
+web/.env.*.local
+web/.npm-cache
+
+
+
+
+# 🚀 后端项目 server (Go) 忽略
+# Go 编译生成的 exe 可执行文件
+server/*.exe
+server/server
+server/main
+
+# 本地配置文件（数据库密码等敏感信息）
+server/config.yaml
+
+# Go 模块缓存目录
+server/.gomodcache/
+server/.gocache/
+.gocache/
+.gomodcache/

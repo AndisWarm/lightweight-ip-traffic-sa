@@ -1,0 +1,117 @@
+:root {
+  --sa-color-primary: #12344d;
+  --sa-color-primary-deep: #0c2234;
+  --sa-color-bg: #eef3f8;
+  --sa-color-bg-soft: #f7fafc;
+  --sa-color-card: #ffffff;
+  --sa-color-text: #17324a;
+  --sa-color-text-secondary: #5e768a;
+  --sa-color-border: #d9e3ec;
+  --sa-color-shadow: rgba(20, 50, 74, 0.08);
+  --sa-color-danger: #d84f3f;
+  --sa-color-warning: #f08c2b;
+  --sa-color-success: #2f8f6b;
+  --sa-radius-card: 18px;
+  --sa-radius-soft: 12px;
+  --sa-page-padding: 24px;
+}
+
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: linear-gradient(180deg, #f5f8fb 0%, var(--sa-color-bg) 100%);
+  color: var(--sa-color-text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sa-page {
+  padding: var(--sa-page-padding);
+  min-height: 100%;
+}
+
+.sa-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.sa-page-header h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  line-height: 1.25;
+  color: var(--sa-color-primary);
+}
+
+.sa-page-header p {
+  margin: 0;
+  color: var(--sa-color-text-secondary);
+  line-height: 1.7;
+}
+
+.sa-panel {
+  border-radius: var(--sa-radius-card);
+  box-shadow: 0 10px 30px var(--sa-color-shadow);
+  border: 1px solid rgba(217, 227, 236, 0.65);
+}
+
+.sa-table-alert {
+  margin-bottom: 16px;
+}
+
+.sa-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.sa-status-tag {
+  font-weight: 600;
+}
+
+.sa-timeline {
+  padding-left: 4px;
+}
+
+.sa-timeline-card {
+  width: 100%;
+}
+
+.sa-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.sa-card-title h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--sa-color-primary);
+}
+
+.sa-card-desc {
+  margin: 0 0 12px;
+  color: var(--sa-color-text-secondary);
+  line-height: 1.7;
+}
+
+@media (max-width: 960px) {
+  .sa-page {
+    padding: 18px;
+  }
+
+  .sa-page-header {
+    flex-direction: column;
+  }
+}
